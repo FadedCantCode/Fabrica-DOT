@@ -1,1 +1,1 @@
-# 沒有外部依賴,但 Vercel 需要這個檔案才能辨識 Python function 並正確 build
+fastapi
