@@ -6,7 +6,7 @@ Vercel 現在需要 FastAPI/Flask 等 ASGI/WSGI framework 才能偵測到 Python
 """
 
 from fastapi import FastAPI, Request, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 import json
 import math
 import os
