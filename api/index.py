@@ -286,6 +286,17 @@ TASK_ORDER = ["a", "b", "c", "d"]
 REDIS_URL = os.environ.get("UPSTASH_REDIS_REST_URL") or os.environ.get("KV_REST_API_URL")
 REDIS_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN") or os.environ.get("KV_REST_API_TOKEN")
 STATE_KEY = "dot_neat_state"
+CHAT_KEY  = "dot_chat_history"
+SYS_KEY   = "dot_system_prompt"
+
+HF_TOKEN    = os.environ.get("HF_API_TOKEN")
+HF_MODEL_ID = os.environ.get("HF_MODEL_ID", "Qwen/Qwen2.5-0.5B-Instruct")
+
+DEFAULT_SYSTEM = (
+    "You are DOT, a concise and thoughtful AI assistant. "
+    "You are honest about what you know and don't know. "
+    "Keep replies short and direct unless asked to elaborate."
+)
 
 import urllib.request
 
@@ -312,6 +323,59 @@ def load_state():
 
 def save_state(state):
     redis_command("SET", STATE_KEY, json.dumps(state))
+
+
+# ============================================================
+# Chat 層:HF Inference API + Redis 儲存
+# ============================================================
+
+def hf_chat(messages: list, system_prompt: str) -> str:
+    if not HF_TOKEN:
+        return "⚠️ HF_API_TOKEN 尚未設定。請在 Vercel 環境變數加入 HF_API_TOKEN。"
+    payload = {
+        "model": HF_MODEL_ID,
+        "messages": [{"role": "system", "content": system_prompt}] + messages,
+        "max_tokens": 512,
+        "temperature": 0.7,
+        "stream": False,
+    }
+    req = urllib.request.Request(
+        "https://api-inference.huggingface.co/v1/chat/completions",
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read())
+        return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"⚠️ HF API error: {e}"
+
+
+def get_system_prompt() -> str:
+    result = redis_command("GET", SYS_KEY)
+    if result and result.get("result"):
+        return result["result"]
+    return DEFAULT_SYSTEM
+
+
+def save_system_prompt(prompt: str):
+    redis_command("SET", SYS_KEY, prompt)
+
+
+def get_chat_history() -> list:
+    result = redis_command("GET", CHAT_KEY)
+    if result and result.get("result"):
+        return json.loads(result["result"])
+    return []
+
+
+def append_turn(role: str, content: str):
+    history = get_chat_history()
+    history.append({"role": role, "content": content})
+    history = history[-200:]   # 最多保留 200 輪作為訓練資料
+    redis_command("SET", CHAT_KEY, json.dumps(history))
 
 
 def pop_to_dict(pop):
@@ -408,212 +472,368 @@ _HTML = r"""<!doctype html>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0A0E14;--bg2:#0E131C;
-  --card:#141A24;--card2:#1A2230;
-  --border:#222C3A;--border-soft:#1A222E;
-  --ink:#E8EDF2;--ink-soft:#8B97A8;--ink-faint:#535E70;
-  --rust:#D97757;--rust-bright:#F08A66;
-  --slate:#8B97A8;--sage:#9DAE8B;--gold:#D9A441;--rose:#C77B6B;
+  --bg:#0A0E14;--bg2:#0E131C;--card:#141A24;--card2:#1A2230;
+  --border:#222C3A;--border-s:#1A222E;
+  --ink:#E8EDF2;--ink-s:#8B97A8;--ink-f:#535E70;
+  --rust:#D97757;--rust-b:#F08A66;
+  --sage:#9DAE8B;--gold:#D9A441;--rose:#C77B6B;
   --mono:'Fragment Mono',monospace;--pixel:'Press Start 2P',monospace;--sans:'Inter',sans-serif;
 }
 html,body{height:100%}
 body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;
-  display:flex;flex-direction:column;height:100vh;overflow:hidden;position:relative;-webkit-font-smoothing:antialiased}
+  display:flex;flex-direction:column;height:100vh;overflow:hidden;-webkit-font-smoothing:antialiased}
 #stars{position:fixed;inset:0;z-index:0;pointer-events:none}
 
-/* top tabs */
-header{display:flex;align-items:center;gap:0;padding:0;flex-shrink:0;
-  background:var(--bg2);border-bottom:1px solid var(--border-soft);z-index:2;position:relative;height:38px}
-.tab{display:flex;align-items:center;gap:7px;padding:0 16px;height:100%;font-size:12px;color:var(--ink-faint);
-  border-right:1px solid var(--border-soft);font-family:var(--mono)}
-.tab.active{color:var(--ink);background:var(--card)}
-.tab .x{color:var(--ink-faint);font-size:11px}
-.tdot{width:6px;height:6px;border-radius:50%;background:var(--ink-faint)}
-.tdot.live{background:var(--sage)}
-.tdot.err{background:var(--rose)}
-.spacer{flex:1}
-.statetxt{font-family:var(--mono);font-size:11px;color:var(--ink-soft);padding-right:16px}
+/* ── HEADER ── */
+header{
+  display:flex;align-items:center;height:38px;flex-shrink:0;
+  background:var(--bg2);border-bottom:1px solid var(--border-s);z-index:10;position:relative;
+}
+.tab-btn{
+  display:flex;align-items:center;gap:7px;padding:0 18px;height:100%;
+  font-family:var(--mono);font-size:12px;color:var(--ink-f);
+  border-right:1px solid var(--border-s);cursor:pointer;user-select:none;border:none;background:none;
+}
+.tab-btn.on{color:var(--ink);background:var(--card)}
+.tdot{width:6px;height:6px;border-radius:50%;background:var(--ink-f)}
+.tdot.live{background:var(--sage)}.tdot.err{background:var(--rose)}
+.hdr-right{margin-left:auto;display:flex;align-items:center;gap:12px;padding-right:16px}
+.state-txt{font-family:var(--mono);font-size:11px;color:var(--ink-s)}
 
-/* hero */
+/* ── PANELS ── */
+.panel{flex:1;display:none;flex-direction:column;overflow:hidden;position:relative;z-index:1}
+.panel.on{display:flex}
+
+/* ════ NEAT TAB ════ */
 .hero{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  z-index:1;position:relative;padding:20px;overflow-y:auto}
-.brandwrap{text-align:center;margin-bottom:8px}
-.brand-tag{font-family:var(--mono);font-size:11px;color:var(--ink-faint);letter-spacing:0.1em;margin-bottom:14px}
-.brand{font-family:var(--pixel);font-size:38px;line-height:1.1;letter-spacing:0;display:flex;gap:14px;align-items:baseline}
-.brand .dot{color:var(--rust)}
-.brand .code{color:var(--slate)}
-@media(max-width:560px){.brand{font-size:24px;gap:8px}}
-
-/* live stat ribbon under logo */
+  padding:20px;overflow-y:auto}
+.brand-tag{font-family:var(--mono);font-size:11px;color:var(--ink-f);letter-spacing:.1em;margin-bottom:14px;text-align:center}
+.brand{font-family:var(--pixel);font-size:34px;display:flex;gap:14px;align-items:baseline}
+.brand .dot{color:var(--rust)}.brand .code{color:var(--ink-s)}
 .ribbon{display:flex;gap:0;margin:22px 0 6px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--card)}
-.rcell{padding:10px 16px;border-right:1px solid var(--border-soft);text-align:center;min-width:78px}
+.rcell{padding:10px 16px;border-right:1px solid var(--border-s);text-align:center;min-width:76px}
 .rcell:last-child{border-right:none}
-.rk{font-family:var(--mono);font-size:9px;color:var(--ink-faint);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px}
+.rk{font-family:var(--mono);font-size:9px;color:var(--ink-f);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px}
 .rv{font-family:var(--mono);font-size:16px;color:var(--ink)}
-.rv.sage{color:var(--sage)}.rv.rust{color:var(--rust)}.rv.gold{color:var(--gold)}.rv.faint{color:var(--ink-faint)}
-
-/* input card */
-.card{width:min(620px,92vw);margin-top:18px;background:var(--card);border:1px solid var(--border);
-  border-radius:12px;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,0.4)}
-.card-top{display:flex;align-items:center;gap:10px;padding:14px 16px}
-.badge{font-family:var(--mono);font-size:11px;color:var(--bg);background:var(--rust);
-  padding:2px 8px;border-radius:5px;font-weight:600;flex-shrink:0}
-#cmd{flex:1;background:none;border:none;outline:none;color:var(--ink);
-  font-family:var(--mono);font-size:14px;caret-color:var(--rust)}
-#cmd::placeholder{color:var(--ink-faint)}
-#cmd:disabled{opacity:.5}
-.spin{display:none;color:var(--gold);font-family:var(--mono);animation:sp 1s linear infinite}
+.rv.sage{color:var(--sage)}.rv.rust{color:var(--rust)}.rv.gold{color:var(--gold)}.rv.faint{color:var(--ink-f)}
+.icard{width:min(600px,92vw);margin-top:18px;background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.icard-top{display:flex;align-items:center;gap:10px;padding:13px 15px}
+.badge{font-family:var(--mono);font-size:11px;color:var(--bg);background:var(--rust);padding:2px 8px;border-radius:5px;flex-shrink:0}
+#ncmd{flex:1;background:none;border:none;outline:none;color:var(--ink);font-family:var(--mono);font-size:13.5px;caret-color:var(--rust)}
+#ncmd::placeholder{color:var(--ink-f)}#ncmd:disabled{opacity:.5}
+.nspin{display:none;color:var(--gold);font-family:var(--mono);animation:sp 1s linear infinite}
+.icard-sub{padding:9px 15px;border-top:1px solid var(--border-s);font-family:var(--mono);font-size:11px;color:var(--ink-f)}
+.icard-sub .a{color:var(--rust)}
+.hints{display:flex;gap:20px;margin-top:16px;font-family:var(--mono);font-size:11px;color:var(--ink-f);flex-wrap:wrap;justify-content:center}
+.hints b{color:var(--ink-s);font-weight:400}
+.nlog{width:min(600px,92vw);margin-top:16px;max-height:28vh;overflow-y:auto;
+  font-family:var(--mono);font-size:12px;line-height:1.75;border-top:1px solid var(--border-s);padding-top:10px}
+.nlog:empty{display:none}
+.nlog::-webkit-scrollbar{width:4px}.nlog::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.lr{display:flex;gap:10px;align-items:baseline;padding:1px 0}
+.lt{color:var(--ink-f);font-size:10px;width:54px;flex-shrink:0}
+.lc{color:var(--rust)}.lo{color:var(--ink)}.ls{color:var(--ink-s);font-style:italic}
+.ler{color:var(--rose)}.lsw{color:var(--gold);font-weight:600}.lgrow{color:var(--sage);font-weight:600}
 @keyframes sp{to{transform:rotate(360deg)}}
-.card-sub{display:flex;align-items:center;gap:8px;padding:10px 16px;border-top:1px solid var(--border-soft);
-  font-family:var(--mono);font-size:11px;color:var(--ink-faint)}
-.card-sub .accent{color:var(--rust)}
 
-.hints{display:flex;gap:22px;margin-top:18px;font-family:var(--mono);font-size:11px;color:var(--ink-faint);flex-wrap:wrap;justify-content:center}
-.hints b{color:var(--ink-soft);font-weight:400}
-.tip{margin-top:20px;font-family:var(--mono);font-size:11px;color:var(--ink-faint);display:flex;align-items:center;gap:7px}
-.tip .led{width:6px;height:6px;border-radius:50%;background:var(--rust)}
+/* ════ CHAT TAB ════ */
+.chat-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;max-width:780px;width:100%;margin:0 auto;padding:0 16px}
 
-/* log drawer */
-.log{width:min(620px,92vw);margin-top:18px;max-height:30vh;overflow-y:auto;font-family:var(--mono);
-  font-size:12px;line-height:1.7;border-top:1px solid var(--border-soft);padding-top:10px}
-.log:empty{display:none}
-.log::-webkit-scrollbar{width:4px}.log::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
-.row{display:flex;gap:10px;align-items:baseline;padding:1px 0}
-.row .t{color:var(--ink-faint);font-size:10px;width:54px;flex-shrink:0}
-.cmd{color:var(--rust)}.out{color:var(--ink)}.sys{color:var(--ink-soft);font-style:italic}
-.err{color:var(--rose)}.sw{color:var(--gold);font-weight:600}.grow{color:var(--sage);font-weight:600}.accent{color:var(--rust)}
-footer{padding:8px 16px;font-family:var(--mono);font-size:11px;color:var(--ink-faint);
-  display:flex;justify-content:space-between;border-top:1px solid var(--border-soft);background:var(--bg2);z-index:2}
+/* system prompt bar */
+.sys-bar{flex-shrink:0;padding:10px 0 8px;border-bottom:1px solid var(--border-s)}
+.sys-toggle{
+  display:flex;align-items:center;gap:8px;cursor:pointer;
+  font-family:var(--mono);font-size:11px;color:var(--ink-f);padding:3px 0;background:none;border:none;
+}
+.sys-toggle .arr{transition:transform .2s;color:var(--rust)}
+.sys-toggle.open .arr{transform:rotate(90deg)}
+.sys-editor{display:none;margin-top:8px;gap:6px;flex-direction:column}
+.sys-editor.vis{display:flex}
+#sys-input{
+  width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:8px;
+  color:var(--ink);font-family:var(--mono);font-size:12px;resize:vertical;min-height:72px;outline:none;
+}
+#sys-input:focus{border-color:var(--rust)}
+.sys-btns{display:flex;gap:8px}
+.sys-save{padding:6px 14px;background:var(--rust);color:var(--bg);font-family:var(--mono);font-size:12px;
+  border:none;border-radius:6px;cursor:pointer;font-weight:600}
+.sys-reset{padding:6px 14px;background:transparent;color:var(--ink-s);font-family:var(--mono);font-size:12px;
+  border:1px solid var(--border);border-radius:6px;cursor:pointer}
+
+/* messages */
+.msgs{flex:1;overflow-y:auto;padding:16px 0;display:flex;flex-direction:column;gap:16px}
+.msgs::-webkit-scrollbar{width:5px}.msgs::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.msg{display:flex;gap:10px;align-items:flex-start;max-width:100%}
+.msg.user{flex-direction:row-reverse}
+.avatar{width:28px;height:28px;border-radius:7px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:10px;font-weight:700}
+.avatar.user{background:var(--card2);color:var(--ink-s)}
+.avatar.bot{background:var(--rust);color:var(--bg)}
+.bubble{max-width:80%;padding:11px 14px;border-radius:12px;font-size:13.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+.msg.user .bubble{background:var(--card2);color:var(--ink);border-bottom-right-radius:3px}
+.msg.bot  .bubble{background:var(--card);color:var(--ink);border-bottom-left-radius:3px;border:1px solid var(--border-s)}
+.typing .bubble{color:var(--ink-f);font-style:italic}
+
+/* input */
+.chat-input-wrap{flex-shrink:0;padding:12px 0 16px;border-top:1px solid var(--border-s)}
+.chat-input-row{display:flex;align-items:flex-end;gap:10px;background:var(--card);
+  border:1px solid var(--border);border-radius:12px;padding:10px 14px;transition:border-color .2s}
+.chat-input-row:focus-within{border-color:var(--rust)}
+#chat-in{
+  flex:1;background:none;border:none;outline:none;resize:none;
+  color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;
+  max-height:140px;overflow-y:auto;caret-color:var(--rust);
+}
+#chat-in::placeholder{color:var(--ink-f)}
+.send-btn{
+  width:32px;height:32px;background:var(--rust);border:none;border-radius:8px;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  color:var(--bg);font-size:14px;transition:opacity .15s;
+}
+.send-btn:disabled{opacity:.35;cursor:default}
+.chat-hint{font-family:var(--mono);font-size:11px;color:var(--ink-f);text-align:center;margin-top:7px}
+.chat-err{color:var(--rose);font-family:var(--mono);font-size:12px;margin-top:6px}
+
+footer{
+  padding:7px 16px;font-family:var(--mono);font-size:11px;color:var(--ink-f);
+  display:flex;justify-content:space-between;border-top:1px solid var(--border-s);
+  background:var(--bg2);z-index:10;flex-shrink:0;
+}
 </style>
 </head>
 <body>
 <canvas id="stars"></canvas>
 
 <header>
-  <div class="tab"><span class="tdot"></span>DOT</div>
-  <div class="tab active"><span class="x">▸</span>evolving neuron</div>
-  <div class="spacer"></div>
-  <div class="statetxt" id="state">connecting…</div>
+  <button class="tab-btn on" id="tab-neat" onclick="switchTab('neat')">
+    <span class="tdot" id="neat-dot"></span>DOT NEAT
+  </button>
+  <button class="tab-btn" id="tab-chat" onclick="switchTab('chat')">
+    <span class="tdot" id="chat-dot"></span>CHAT
+  </button>
+  <div class="hdr-right">
+    <span class="state-txt" id="hdr-state">connecting…</span>
+  </div>
 </header>
 
-<div class="hero">
-  <div class="brandwrap">
+<!-- ═══ NEAT PANEL ═══ -->
+<div class="panel on" id="panel-neat">
+  <div class="hero">
     <div class="brand-tag">NeuroEvolution of Augmenting Topologies</div>
     <div class="brand"><span class="dot">DOT</span><span class="code">NEAT</span></div>
-  </div>
-
-  <div class="ribbon">
-    <div class="rcell"><div class="rk">gen</div><div class="rv faint" id="r-gen">—</div></div>
-    <div class="rcell"><div class="rk">neurons</div><div class="rv faint" id="r-neu">—</div></div>
-    <div class="rcell"><div class="rk">fitness</div><div class="rv faint" id="r-fit">—</div></div>
-    <div class="rcell"><div class="rk">task</div><div class="rv faint" id="r-task">—</div></div>
-    <div class="rcell"><div class="rk">mse</div><div class="rv faint" id="r-mse">—</div></div>
-  </div>
-
-  <div class="card">
-    <div class="card-top">
-      <span class="badge">RUN</span>
-      <input id="cmd" placeholder="輸入指令… run [N] · status · help · clear" autocomplete="off" spellcheck="false">
-      <span class="spin" id="spin">⟳</span>
+    <div class="ribbon">
+      <div class="rcell"><div class="rk">gen</div><div class="rv faint" id="r-gen">—</div></div>
+      <div class="rcell"><div class="rk">neurons</div><div class="rv faint" id="r-neu">—</div></div>
+      <div class="rcell"><div class="rk">fitness</div><div class="rv faint" id="r-fit">—</div></div>
+      <div class="rcell"><div class="rk">task</div><div class="rv faint" id="r-task">—</div></div>
+      <div class="rcell"><div class="rk">mse</div><div class="rv faint" id="r-mse">—</div></div>
     </div>
-    <div class="card-sub"><span class="accent">›</span> DOT NEAT · 神經元會隨演化長出與修剪 · 狀態存於 Redis</div>
+    <div class="icard">
+      <div class="icard-top">
+        <span class="badge">RUN</span>
+        <input id="ncmd" placeholder="run [N] · status · help · clear" autocomplete="off" spellcheck="false">
+        <span class="nspin" id="nspin">⟳</span>
+      </div>
+      <div class="icard-sub"><span class="a">›</span> DOT NEAT — 神經元隨演化長出與修剪，每 500 代換任務</div>
+    </div>
+    <div class="hints">
+      <div><b>run N</b> 演化</div><div><b>status</b> 狀態</div>
+      <div><b>↑↓</b> 歷史</div><div><b>clear</b> 清空</div>
+    </div>
+    <div class="nlog" id="nlog"></div>
   </div>
+</div>
 
-  <div class="hints">
-    <div><b>tab</b> 歷史指令</div>
-    <div><b>run N</b> 演化 N 代</div>
-    <div><b>status</b> 讀取狀態</div>
-    <div><b>/ </b> 喚起命令</div>
+<!-- ═══ CHAT PANEL ═══ -->
+<div class="panel" id="panel-chat">
+  <div class="chat-wrap">
+
+    <div class="sys-bar">
+      <button class="sys-toggle" id="sys-toggle" onclick="toggleSys()">
+        <span class="arr">▶</span><span>System Prompt</span>
+        <span style="margin-left:6px;color:var(--rust);font-size:10px" id="sys-model"></span>
+      </button>
+      <div class="sys-editor" id="sys-editor">
+        <textarea id="sys-input" rows="3" placeholder="在這裡輸入 system prompt…"></textarea>
+        <div class="sys-btns">
+          <button class="sys-save" onclick="saveSystem()">儲存</button>
+          <button class="sys-reset" onclick="resetSystem()">還原預設</button>
+        </div>
+        <div class="chat-err" id="sys-err" style="display:none"></div>
+      </div>
+    </div>
+
+    <div class="msgs" id="msgs"></div>
+
+    <div class="chat-input-wrap">
+      <div class="chat-input-row">
+        <textarea id="chat-in" rows="1" placeholder="輸入訊息…（Enter 送出，Shift+Enter 換行）"></textarea>
+        <button class="send-btn" id="send-btn" onclick="sendMsg()" title="送出">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M1 7h12M7 1l6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+      <div class="chat-hint" id="chat-hint">model: <span id="model-hint">—</span> · <span id="hf-hint">checking…</span></div>
+    </div>
+
   </div>
-
-  <div class="tip"><span class="led"></span>提示：神經元數量上升代表網路正在「長大」，fitness 上升代表它學得更好</div>
-
-  <div class="log" id="log"></div>
 </div>
 
 <footer>
-  <span>~/dot-neat:main</span>
-  <span id="foot-cl">continual evolution</span>
-  <span>0.2.0</span>
+  <span>~/dot:main</span>
+  <span id="foot-txt">DOT v0.3.0</span>
+  <span id="foot-r">0.3.0</span>
 </footer>
 
 <script>
-// starfield
+// ── Starfield ──────────────────────────────────────────────
 const cv=document.getElementById('stars'),cx=cv.getContext('2d');
 let stars=[];
 function resize(){cv.width=innerWidth;cv.height=innerHeight;
   stars=Array.from({length:Math.floor(innerWidth*innerHeight/9000)},()=>({
     x:Math.random()*cv.width,y:Math.random()*cv.height,r:Math.random()*1.2+0.2,
-    a:Math.random()*0.5+0.15,tw:Math.random()*0.02+0.005}));}
+    a:Math.random()*.5+.15,tw:Math.random()*.02+.005}));}
 resize();addEventListener('resize',resize);
-function draw(){cx.clearRect(0,0,cv.width,cv.height);
-  for(const s of stars){s.a+=s.tw;if(s.a>0.7||s.a<0.1)s.tw*=-1;
-    cx.fillStyle=`rgba(217,119,87,${s.a*0.5})`;cx.beginPath();cx.arc(s.x,s.y,s.r,0,7);cx.fill();}
-  requestAnimationFrame(draw);}
-draw();
+(function draw(){cx.clearRect(0,0,cv.width,cv.height);
+  for(const s of stars){s.a+=s.tw;if(s.a>.7||s.a<.1)s.tw*=-1;
+    cx.fillStyle=`rgba(217,119,87,${s.a*.5})`;cx.beginPath();cx.arc(s.x,s.y,s.r,0,7);cx.fill();}
+  requestAnimationFrame(draw);})();
 
-const $log=document.getElementById('log'),$cmd=document.getElementById('cmd'),$spin=document.getElementById('spin'),
-      $state=document.getElementById('state');
-let hist=[],hIdx=-1,busy=false,tick=null,cd=30,lastNeu=null;
+// ── Tab switching ──────────────────────────────────────────
+function switchTab(t){
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('on'));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));
+  document.getElementById('tab-'+t).classList.add('on');
+  document.getElementById('panel-'+t).classList.add('on');
+  if(t==='chat'){loadSystem();document.getElementById('chat-in').focus();}
+}
+
+// ── NEAT tab ──────────────────────────────────────────────
+const $nlog=document.getElementById('nlog'),$ncmd=document.getElementById('ncmd'),$nspin=document.getElementById('nspin');
+let nhist=[],nhIdx=-1,nbusy=false,ncd=30,ntick=null,lastNeu=null;
 const ts=()=>new Date().toTimeString().slice(0,8);
-function row(h,c){const d=document.createElement('div');d.className='row';
-  d.innerHTML=`<span class="t">${ts()}</span><span class="${c}">${h}</span>`;$log.appendChild(d);$log.scrollTop=$log.scrollHeight;}
-function plain(h){const d=document.createElement('div');d.className='row';
-  d.innerHTML=`<span class="t"></span><span>${h}</span>`;$log.appendChild(d);$log.scrollTop=$log.scrollHeight;}
-
-function apply(d){
+function nrow(h,c){const d=document.createElement('div');d.className='lr';
+  d.innerHTML=`<span class="lt">${ts()}</span><span class="${c}">${h}</span>`;$nlog.appendChild(d);$nlog.scrollTop=$nlog.scrollHeight;}
+function nplain(h){const d=document.createElement('div');d.className='lr';
+  d.innerHTML=`<span class="lt"></span><span>${h}</span>`;$nlog.appendChild(d);$nlog.scrollTop=$nlog.scrollHeight;}
+function applyNeat(d){
   const fit=d.best_fitness??0,gen=d.total_generations??0,neu=d.n_neurons??null;
   const g=document.getElementById('r-gen');g.textContent=gen;g.className='rv sage';
   const nu=document.getElementById('r-neu');nu.textContent=neu??'—';nu.className='rv rust';
-  const f=document.getElementById('r-fit');f.textContent=fit.toFixed(3);
-  f.className='rv '+(fit>0.95?'sage':fit>0.7?'rust':'gold');
-  const t=document.getElementById('r-task');t.textContent=d.current_task?'task_'+d.current_task:'—';
-  t.className='rv '+(d.current_task?'rust':'faint');
+  const f=document.getElementById('r-fit');f.textContent=fit.toFixed(3);f.className='rv '+(fit>.95?'sage':fit>.7?'rust':'gold');
+  const t=document.getElementById('r-task');t.textContent=d.current_task?'task_'+d.current_task:'—';t.className='rv '+(d.current_task?'rust':'faint');
   document.getElementById('r-mse').textContent=(d.mse_current_task??d.mse_task_a)?.toFixed(3)??'—';
-  $state.textContent='live · '+(d.redis_connected?'redis ✓':'no redis');
-  document.querySelector('.tdot').classList.add('live');
-  return {neu,gen};
+  document.getElementById('hdr-state').textContent='live';
+  document.getElementById('neat-dot').classList.add('live');
 }
-
-function setBusy(v){busy=v;$spin.style.display=v?'inline':'none';$cmd.disabled=v;}
-function resetCd(){clearInterval(tick);cd=30;tick=setInterval(()=>{cd--;
-  if(cd<=0){doStatus(true);resetCd();}},1000);}
-
-async function doStatus(silent){
+function setNBusy(v){nbusy=v;$nspin.style.display=v?'inline':'none';$ncmd.disabled=v;}
+function resetNcd(){clearInterval(ntick);ncd=30;ntick=setInterval(()=>{ncd--;if(ncd<=0){doNStatus(true);resetNcd();}},1000);}
+async function doNStatus(silent){
   try{const r=await fetch('/api/status');if(!r.ok)throw r.status;const d=await r.json();
-    if(d.status==='no_data'){$state.textContent='live · no data yet';return;}
-    apply(d);if(!silent)row(JSON.stringify(d),'out');
-  }catch(e){$state.textContent='error';document.querySelector('.tdot').classList.add('err');if(!silent)row('status failed: '+e,'err');}
+    if(d.status==='no_data'){document.getElementById('hdr-state').textContent='no data';return;}
+    applyNeat(d);if(!silent)nrow(JSON.stringify(d),'lo');
+  }catch(e){document.getElementById('hdr-state').textContent='err';if(!silent)nrow('status failed: '+e,'ler');}
 }
-async function doRun(n){
-  if(busy){row('busy — wait','sys');return;}
-  setBusy(true);row('run '+n,'cmd');row('evolving '+n+' generations…','sys');
+async function doNRun(n){
+  if(nbusy){nrow('busy — wait','ls');return;}
+  setNBusy(true);nrow('run '+n,'lc');nrow('evolving '+n+' generations…','ls');
   try{const r=await fetch('/api/evolve?generations='+n);if(!r.ok)throw r.status;const d=await r.json();
-    const {neu}=apply(d);
+    applyNeat(d);
     let growth='';
-    if(lastNeu!==null&&neu!==null){
-      if(neu>lastNeu)growth=` <span class="grow">↑ grew ${neu-lastNeu} neuron(s) → ${neu}</span>`;
-      else if(neu<lastNeu)growth=` <span class="sys">↓ pruned ${lastNeu-neu} → ${neu}</span>`;
+    if(lastNeu!==null&&d.n_neurons!==null){
+      if(d.n_neurons>lastNeu)growth=` <span class="lgrow">↑ grew ${d.n_neurons-lastNeu} → ${d.n_neurons}</span>`;
+      else if(d.n_neurons<lastNeu)growth=` <span class="ls">↓ pruned → ${d.n_neurons}</span>`;
     }
-    lastNeu=neu;
-    const sw=d.switched_task_this_call?` <span class="sw">★ task → ${d.current_task}</span>`:'';
-    row(`done · gen ${d.total_generations} · neurons ${d.n_neurons} (avg ${d.avg_neurons}, max ${d.max_neurons}) · fit ${d.best_fitness} · mse ${d.mse_current_task}${growth}${sw}`,'out');
-  }catch(e){row('error: '+e,'err');}
-  setBusy(false);resetCd();
+    lastNeu=d.n_neurons;
+    const sw=d.switched_task_this_call?` <span class="lsw">★ task → ${d.current_task}</span>`:'';
+    nrow(`done · gen ${d.total_generations} · n=${d.n_neurons}(avg ${d.avg_neurons} max ${d.max_neurons}) · fit ${d.best_fitness} · mse ${d.mse_current_task}${growth}${sw}`,'lo');
+  }catch(e){nrow('error: '+e,'ler');}
+  setNBusy(false);resetNcd();
 }
-function cmd(raw){const p=raw.trim().replace(/^\//,'').split(/\s+/),c=p[0].toLowerCase();
-  if(c==='run')doRun(Math.max(1,Math.min(parseInt(p[1])||40,300)));
-  else if(c==='status'){row('status','cmd');doStatus(false);}
-  else if(c==='clear')$log.innerHTML='';
-  else if(c==='help'){plain('<span class="accent">run [N]</span> 演化 N 代 (預設40 上限300)');
-    plain('<span class="accent">status</span> 讀取狀態不演化');plain('<span class="accent">clear</span> 清除輸出');
-    plain('<span class="sys">↑↓ 命令歷史</span>');}
-  else row('unknown: '+c,'err');}
-$cmd.addEventListener('keydown',e=>{
-  if(e.key==='Enter'){const v=$cmd.value.trim();if(!v)return;hist.unshift(v);hIdx=-1;$cmd.value='';cmd(v);}
-  else if(e.key==='ArrowUp'){e.preventDefault();hIdx=Math.min(hIdx+1,hist.length-1);$cmd.value=hist[hIdx]??'';}
-  else if(e.key==='ArrowDown'){e.preventDefault();hIdx=Math.max(hIdx-1,-1);$cmd.value=hIdx<0?'':hist[hIdx];}});
-doStatus(true);resetCd();
+function ncmd(raw){const p=raw.trim().split(/\s+/),c=p[0].toLowerCase();
+  if(c==='run')doNRun(Math.max(1,Math.min(parseInt(p[1])||40,300)));
+  else if(c==='status'){nrow('status','lc');doNStatus(false);}
+  else if(c==='clear')$nlog.innerHTML='';
+  else if(c==='help'){nplain('<span style="color:var(--rust)">run [N]</span> 演化N代');
+    nplain('<span style="color:var(--rust)">status</span> 讀狀態');nplain('<span style="color:var(--rust)">clear</span> 清空');}
+  else nrow('unknown: '+c,'ler');}
+$ncmd.addEventListener('keydown',e=>{
+  if(e.key==='Enter'){const v=$ncmd.value.trim();if(!v)return;nhist.unshift(v);nhIdx=-1;$ncmd.value='';ncmd(v);}
+  else if(e.key==='ArrowUp'){e.preventDefault();nhIdx=Math.min(nhIdx+1,nhist.length-1);$ncmd.value=nhist[nhIdx]??'';}
+  else if(e.key==='ArrowDown'){e.preventDefault();nhIdx=Math.max(nhIdx-1,-1);$ncmd.value=nhIdx<0?'':nhist[nhIdx];}});
+
+// ── Chat tab ──────────────────────────────────────────────
+const $msgs=document.getElementById('msgs');
+let chatHistory=[], chatBusy=false, currentSystem='';
+
+function toggleSys(){
+  const t=document.getElementById('sys-toggle');
+  const e=document.getElementById('sys-editor');
+  t.classList.toggle('open');
+  e.classList.toggle('vis');
+}
+async function loadSystem(){
+  try{const r=await fetch('/api/system');const d=await r.json();
+    currentSystem=d.prompt;
+    document.getElementById('sys-input').value=d.prompt;
+    document.getElementById('sys-model').textContent=d.model||'';
+    document.getElementById('model-hint').textContent=d.model||'—';
+    document.getElementById('hf-hint').textContent=d.hf_ready?'HF ✓':'HF_API_TOKEN 未設定';
+  }catch(e){}
+}
+async function saveSystem(){
+  const p=document.getElementById('sys-input').value.trim();
+  if(!p)return;
+  const e=document.getElementById('sys-err');
+  try{const r=await fetch('/api/system',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:p})});
+    const d=await r.json();if(d.ok){currentSystem=p;e.style.display='none';toggleSys();}
+    else{e.textContent=d.error||'error';e.style.display='';}
+  }catch(err){e.textContent=String(err);e.style.display='';}
+}
+async function resetSystem(){
+  const r=await fetch('/api/system/reset',{method:'POST'});
+  const d=await r.json();
+  currentSystem=d.prompt;document.getElementById('sys-input').value=d.prompt;
+  document.getElementById('sys-err').style.display='none';
+}
+function addMsg(role,content,typing=false){
+  const wrap=document.createElement('div');
+  wrap.className='msg '+(role==='user'?'user':'bot')+(typing?' typing':'');
+  const av=document.createElement('div');av.className='avatar '+(role==='user'?'user':'bot');
+  av.textContent=role==='user'?'你':'D';
+  const bub=document.createElement('div');bub.className='bubble';bub.textContent=content;
+  wrap.appendChild(av);wrap.appendChild(bub);
+  $msgs.appendChild(wrap);$msgs.scrollTop=$msgs.scrollHeight;
+  return bub;
+}
+async function sendMsg(){
+  const inp=document.getElementById('chat-in');
+  const txt=inp.value.trim();if(!txt||chatBusy)return;
+  inp.value='';autoResize();chatBusy=true;
+  document.getElementById('send-btn').disabled=true;
+  addMsg('user',txt);
+  chatHistory.push({role:'user',content:txt});
+  const typBub=addMsg('bot','thinking…',true);
+  try{
+    const r=await fetch('/api/chat',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({messages:chatHistory.slice(-20),system:currentSystem})});
+    const d=await r.json();
+    if(d.error){typBub.textContent='⚠️ '+d.error;typBub.parentElement.classList.remove('typing');}
+    else{typBub.textContent=d.reply;typBub.parentElement.classList.remove('typing');
+      chatHistory.push({role:'assistant',content:d.reply});}
+  }catch(e){typBub.textContent='⚠️ fetch error: '+e;typBub.parentElement.classList.remove('typing');}
+  chatBusy=false;document.getElementById('send-btn').disabled=false;
+  inp.focus();$msgs.scrollTop=$msgs.scrollHeight;
+}
+function autoResize(){const t=document.getElementById('chat-in');t.style.height='auto';t.style.height=Math.min(t.scrollHeight,140)+'px';}
+document.getElementById('chat-in').addEventListener('input',autoResize);
+document.getElementById('chat-in').addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});
+
+// ── Boot ──────────────────────────────────────────────────
+doNStatus(true);resetNcd();loadSystem();
 </script>
 </body>
 </html>"""
@@ -658,3 +878,54 @@ async def evolve_endpoint(request: Request, generations: int = Query(default=GEN
         return JSONResponse(run_batch(generations))
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/chat")
+async def chat_endpoint(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    messages = body.get("messages", [])
+    system   = body.get("system", "") or get_system_prompt()
+    if not messages:
+        return JSONResponse({"error": "no messages"}, status_code=400)
+    last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), None)
+    reply = hf_chat(messages, system)
+    if last_user:
+        append_turn("user", last_user)
+    append_turn("assistant", reply)
+    return JSONResponse({"reply": reply})
+
+
+@app.get("/api/system")
+async def get_system_endpoint():
+    return JSONResponse({
+        "prompt": get_system_prompt(),
+        "model": HF_MODEL_ID,
+        "hf_ready": bool(HF_TOKEN),
+    })
+
+
+@app.post("/api/system")
+async def set_system_endpoint(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    prompt = (body.get("prompt") or "").strip()
+    if not prompt:
+        return JSONResponse({"error": "prompt cannot be empty"}, status_code=400)
+    save_system_prompt(prompt)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/system/reset")
+async def reset_system_endpoint():
+    save_system_prompt(DEFAULT_SYSTEM)
+    return JSONResponse({"ok": True, "prompt": DEFAULT_SYSTEM})
+
+
+@app.get("/api/chat/history")
+async def chat_history_endpoint():
+    return JSONResponse({"history": get_chat_history(), "model": HF_MODEL_ID})
