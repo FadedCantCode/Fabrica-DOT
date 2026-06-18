@@ -338,14 +338,342 @@ def run_batch(generations: int) -> dict:
 
 
 # ============================================================
-# FastAPI app —— Vercel 新版 Python runtime 要這個
+# FastAPI app
 # ============================================================
 
 app = FastAPI()
 
+_HTML = r"""<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DOT — evolving neuron</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#080C0B;--bg2:#0F1512;--bg3:#172018;
+  --green:#6FFF6F;--green-dim:#2A5C2A;
+  --amber:#FFB454;--cyan:#5EE6E6;--red:#FF6B6B;--bone:#C8DDD0;
+  --border:rgba(111,255,111,0.15);
+  --font:'JetBrains Mono',monospace;
+}
+html,body{height:100%;background:var(--bg);color:var(--green);font:13px/1.6 var(--font);-webkit-font-smoothing:antialiased}
+body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+/* TOP BAR */
+#topbar{
+  display:flex;align-items:center;gap:12px;
+  padding:10px 16px;background:var(--bg2);
+  border-bottom:1px solid var(--border);flex-shrink:0;
+}
+#topbar .logo{font-size:15px;font-weight:700;letter-spacing:0.08em;color:var(--green)}
+#topbar .sep{color:var(--green-dim)}
+#topbar .sub{font-size:11px;color:var(--green-dim);letter-spacing:0.06em;text-transform:uppercase}
+#live-dot{margin-left:auto;font-size:11px;letter-spacing:0.08em}
+#auto-label{font-size:11px;color:var(--green-dim)}
+
+/* STATS STRIP */
+#statsbar{
+  display:flex;gap:0;flex-shrink:0;
+  border-bottom:1px solid var(--border);background:var(--bg2);
+}
+.sblock{
+  padding:10px 18px;border-right:1px solid var(--border);
+  display:flex;flex-direction:column;gap:2px;
+}
+.sblock:last-child{border-right:none}
+.slabel{font-size:9px;color:var(--green-dim);letter-spacing:0.12em;text-transform:uppercase}
+.sval{font-size:20px;font-weight:700;color:var(--cyan);line-height:1}
+.sval.good{color:var(--green)}
+.sval.warn{color:var(--amber)}
+.sval.na{color:var(--green-dim)}
+#bar-block{flex:1;display:flex;flex-direction:column;justify-content:center;padding:10px 18px;gap:6px}
+.bartrack{height:3px;background:var(--green-dim);border-radius:2px;overflow:hidden}
+.barfill{height:100%;background:var(--green);border-radius:2px;transition:width .6s ease}
+#cl-line{font-size:10px;color:var(--green-dim);letter-spacing:0.04em}
+#cl-line.active{color:var(--cyan)}
+
+/* MAIN TERMINAL */
+#terminal{
+  flex:1;overflow:hidden;display:flex;flex-direction:column;
+  padding:12px 16px 0;gap:0;
+}
+#log{
+  flex:1;overflow-y:auto;font-size:12px;line-height:1.75;
+  padding-bottom:4px;
+}
+#log::-webkit-scrollbar{width:4px}
+#log::-webkit-scrollbar-track{background:transparent}
+#log::-webkit-scrollbar-thumb{background:var(--green-dim);border-radius:2px}
+.ll{display:flex;gap:10px;align-items:baseline}
+.lt{color:var(--green-dim);flex-shrink:0;font-size:11px}
+.lc{color:var(--amber)}
+.lo{color:var(--bone)}
+.ls{color:var(--green-dim);font-style:italic}
+.ler{color:var(--red)}
+.lh{color:var(--cyan)}
+.lsw{color:var(--amber);font-weight:700}
+
+/* INPUT ROW */
+#inputrow{
+  display:flex;align-items:center;gap:8px;
+  padding:10px 0 12px;border-top:1px solid var(--border);margin-top:8px;
+}
+#prompt{color:var(--green);font-weight:700;user-select:none}
+#cmdinput{
+  flex:1;background:none;border:none;outline:none;
+  color:var(--green);font:13px/1 var(--font);
+  caret-color:var(--green);
+}
+#cmdinput::placeholder{color:var(--green-dim)}
+#spinner{color:var(--amber);display:none;animation:spin 1s linear infinite;font-size:14px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <span class="logo">DOT</span>
+  <span class="sep">/</span>
+  <span class="sub">evolving neuron runtime</span>
+  <span id="live-dot" style="color:var(--green-dim)">○ connecting</span>
+  <span id="auto-label"></span>
+</div>
+
+<div id="statsbar">
+  <div class="sblock">
+    <div class="slabel">generation</div>
+    <div class="sval na" id="s-gen">—</div>
+  </div>
+  <div class="sblock">
+    <div class="slabel">best fitness</div>
+    <div class="sval na" id="s-fit">—</div>
+  </div>
+  <div class="sblock">
+    <div class="slabel">task</div>
+    <div class="sval na" id="s-task">—</div>
+  </div>
+  <div class="sblock">
+    <div class="slabel">mse task_a</div>
+    <div class="sval na" id="s-ma">—</div>
+  </div>
+  <div class="sblock">
+    <div class="slabel">mse task_b</div>
+    <div class="sval na" id="s-mb">—</div>
+  </div>
+  <div id="bar-block">
+    <div class="bartrack"><div class="barfill" id="s-bar" style="width:0"></div></div>
+    <div id="cl-line">continual learning —</div>
+  </div>
+</div>
+
+<div id="terminal">
+  <div id="log"></div>
+  <div id="inputrow">
+    <span id="prompt">$</span>
+    <input id="cmdinput" placeholder="run [N] · status · help · clear" autocomplete="off" spellcheck="false">
+    <span id="spinner">⟳</span>
+  </div>
+</div>
+
+<script>
+const $log   = document.getElementById('log');
+const $cmd   = document.getElementById('cmdinput');
+const $spin  = document.getElementById('spinner');
+const $live  = document.getElementById('live-dot');
+const $auto  = document.getElementById('auto-label');
+
+let hist=[], hIdx=-1, busy=false, autoTimer=null, countdown=30, tickTimer=null;
+
+const ts = () => new Date().toTimeString().slice(0,8);
+
+function line(text, cls){
+  const d=document.createElement('div');
+  d.className='ll';
+  d.innerHTML=`<span class="lt">[${ts()}]</span><span class="${cls}">${text}</span>`;
+  $log.appendChild(d);
+  $log.scrollTop=$log.scrollHeight;
+}
+
+function applyStats(d){
+  const fit = d.best_fitness ?? 0;
+  const gen = d.total_generations ?? 0;
+
+  const sg = document.getElementById('s-gen');
+  sg.textContent = gen;
+  sg.className = 'sval good';
+
+  const sf = document.getElementById('s-fit');
+  sf.textContent = fit.toFixed(4);
+  sf.className = 'sval ' + (fit>0.95?'good':fit>0.7?'':'warn');
+
+  const st = document.getElementById('s-task');
+  st.textContent = d.current_task ? 'task_'+d.current_task : '—';
+  st.className = 'sval ' + (d.current_task?'':'na');
+
+  document.getElementById('s-ma').textContent = d.mse_task_a?.toFixed(4)??'—';
+  document.getElementById('s-ma').className = 'sval ' + (d.mse_task_a<0.01?'good':d.mse_task_a<0.1?'':'warn');
+  document.getElementById('s-mb').textContent = d.mse_task_b?.toFixed(4)??'—';
+
+  document.getElementById('s-bar').style.width = (fit*100).toFixed(1)+'%';
+
+  const cl = document.getElementById('cl-line');
+  if(d.continual_learning_active){
+    cl.textContent='● continual learning active — EWC + replay';
+    cl.className='cl-line active';
+  } else {
+    const eta = gen<600 ? ` — activates at gen 600 (${600-gen} to go)` : '';
+    cl.textContent='○ continual learning inactive'+eta;
+    cl.className='cl-line';
+  }
+
+  $live.textContent='● live';
+  $live.style.color='var(--green)';
+}
+
+function setBusy(v){
+  busy=v;
+  $spin.style.display=v?'inline':'none';
+  $cmd.disabled=v;
+}
+
+function resetAutoCountdown(){
+  clearInterval(tickTimer);
+  countdown=30;
+  tickTimer=setInterval(()=>{
+    countdown--;
+    $auto.textContent=`auto-refresh in ${countdown}s`;
+    if(countdown<=0){ doStatus(true); resetAutoCountdown(); }
+  },1000);
+  $auto.textContent=`auto-refresh in ${countdown}s`;
+}
+
+async function doStatus(silent){
+  try{
+    const r=await fetch('/api/status');
+    if(!r.ok) throw new Error(r.status);
+    const d=await r.json();
+    applyStats(d);
+    if(!silent) line(JSON.stringify(d),'lo');
+  }catch(e){
+    $live.textContent='✕ error';
+    $live.style.color='var(--red)';
+    if(!silent) line('fetch /api/status failed: '+e,'ler');
+  }
+}
+
+async function doRun(gens){
+  if(busy){line('already running, wait...','ls');return;}
+  setBusy(true);
+  line(`run ${gens}`,'lc');
+  line('evolving...','ls');
+  try{
+    const r=await fetch('/api/evolve?generations='+gens);
+    if(!r.ok) throw new Error(r.status);
+    const d=await r.json();
+    applyStats(d);
+    const sw=d.switched_task_this_call?` <span class="lsw">★ task switch → ${d.current_task}</span>`:'';
+    line(`✓ gen=${d.total_generations} &nbsp;fit=${d.best_fitness} &nbsp;mse_a=${d.mse_task_a} &nbsp;mse_b=${d.mse_task_b}${sw}`,'lo');
+    if(d.continual_learning_active && !d.switched_task_this_call)
+      line('   EWC + replay active — old task memory protected','ls');
+  }catch(e){
+    line('error: '+e,'ler');
+  }
+  setBusy(false);
+  resetAutoCountdown();
+}
+
+function handleCmd(raw){
+  const p=raw.trim().split(/\s+/);
+  const c=p[0].toLowerCase();
+  if(c==='run'){
+    doRun(Math.max(1,Math.min(parseInt(p[1])||50,500)));
+  }else if(c==='status'){
+    line('status','lc');
+    doStatus(false);
+  }else if(c==='clear'){
+    $log.innerHTML='';
+  }else if(c==='help'){
+    [
+      '<span class="lh">available commands</span>',
+      '  <span class="lc">run [N]</span>   &nbsp;evolve N generations (default 50, max 500)',
+      '  <span class="lc">status</span>    &nbsp;read current state from Redis without evolving',
+      '  <span class="lc">clear</span>     &nbsp;clear terminal output',
+      '  <span class="lc">help</span>      &nbsp;show this message',
+      '',
+      '  <span class="ls">↑ ↓ arrow keys navigate command history</span>',
+    ].forEach(t=>{
+      const d=document.createElement('div');
+      d.className='ll';
+      d.innerHTML=`<span class="lt">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span>${t}</span>`;
+      $log.appendChild(d);
+    });
+    $log.scrollTop=$log.scrollHeight;
+  }else{
+    line(`unknown: ${c} — type help`,'ler');
+  }
+}
+
+$cmd.addEventListener('keydown', e=>{
+  if(e.key==='Enter'){
+    const v=$cmd.value.trim();
+    if(!v)return;
+    hist.unshift(v); hIdx=-1; $cmd.value='';
+    handleCmd(v);
+  }else if(e.key==='ArrowUp'){
+    e.preventDefault();
+    hIdx=Math.min(hIdx+1,hist.length-1);
+    $cmd.value=hist[hIdx]??'';
+  }else if(e.key==='ArrowDown'){
+    e.preventDefault();
+    hIdx=Math.max(hIdx-1,-1);
+    $cmd.value=hIdx<0?'':hist[hIdx];
+  }
+});
+
+// boot
+line('<span class="lh">DOT evolving neuron terminal</span>','lo');
+line('type <span class="lc">help</span> to see commands &nbsp;·&nbsp; status polls every 30s','ls');
+line('','ls');
+doStatus(true);
+resetAutoCountdown();
+</script>
+</body>
+</html>"""
+
+
+@app.get("/", response_class=HTMLResponse)
+async def terminal():
+    return HTMLResponse(_HTML)
+
+
+@app.get("/api/status")
+async def status_endpoint():
+    redis_connected = bool(REDIS_URL and REDIS_TOKEN)
+    state = load_state()
+    if state is None:
+        return JSONResponse({"redis_connected": redis_connected, "status": "no_data",
+                             "message": "no evolution has run yet"})
+    individuals = state.get("population", {}).get("individuals", [])
+    best_fitness = max((ind.get("fitness") or 0) for ind in individuals) if individuals else 0
+    pop = population_from_dict(state["population"]) if "population" in state else None
+    mse_a = round(mse_loss(pop.best_individual.genome, DATA_A), 4) if pop else None
+    mse_b = round(mse_loss(pop.best_individual.genome, DATA_B), 4) if pop else None
+    return JSONResponse({
+        "redis_connected": redis_connected,
+        "total_generations": state["generation"],
+        "current_task": state["current_task"],
+        "continual_learning_active": state.get("ewc_importance") is not None,
+        "best_fitness": round(best_fitness, 4),
+        "mse_task_a": mse_a,
+        "mse_task_b": mse_b,
+    })
+
 
 @app.get("/api/evolve")
-@app.get("/")
 async def evolve_endpoint(
     request: Request,
     generations: int = Query(default=GENERATIONS_PER_RUN_DEFAULT),
