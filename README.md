@@ -1,4 +1,4 @@
-# evolving-neuron-vercel
+# DOT evolving-neuron
 
 把 evolving_neuron.py 的自我演化神經元,改成可以掛在 Vercel 上、靠排程器自己跑的版本。
 
