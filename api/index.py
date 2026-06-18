@@ -348,298 +348,233 @@ _HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DOT — evolving neuron</title>
+<title>DOT</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fragment+Mono:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#080C0B;--bg2:#0F1512;--bg3:#172018;
-  --green:#6FFF6F;--green-dim:#2A5C2A;
-  --amber:#FFB454;--cyan:#5EE6E6;--red:#FF6B6B;--bone:#C8DDD0;
-  --border:rgba(111,255,111,0.15);
-  --font:'JetBrains Mono',monospace;
+  --bg:#1A1815;          /* 暖調深灰,帶一點褐 */
+  --bg-raised:#232019;
+  --bg-input:#2A261F;
+  --border:#332E26;
+  --border-soft:#2A2620;
+  --ink:#EDE7DC;         /* 米白主文字 */
+  --ink-soft:#A89E8E;    /* 次級文字 */
+  --ink-faint:#6B6356;   /* 最淡 */
+  --rust:#D97757;        /* 暖橘陶土,主強調色 */
+  --sage:#9DAE8B;        /* 柔和鼠尾草綠,正向狀態 */
+  --gold:#D9A441;        /* 暖金,警示/切換 */
+  --rose:#C77B6B;        /* 柔紅,錯誤 */
+  --mono:'Fragment Mono',monospace;
+  --sans:'Inter',-apple-system,sans-serif;
 }
-html,body{height:100%;background:var(--bg);color:var(--green);font:13px/1.6 var(--font);-webkit-font-smoothing:antialiased}
-body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+html,body{height:100%}
+body{
+  background:var(--bg);color:var(--ink);
+  font-family:var(--sans);font-size:14px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  display:flex;flex-direction:column;height:100vh;overflow:hidden;
+}
 
-/* TOP BAR */
-#topbar{
+/* HEADER */
+header{
   display:flex;align-items:center;gap:12px;
-  padding:10px 16px;background:var(--bg2);
-  border-bottom:1px solid var(--border);flex-shrink:0;
+  padding:14px 20px;flex-shrink:0;
+  border-bottom:1px solid var(--border-soft);
 }
-#topbar .logo{font-size:15px;font-weight:700;letter-spacing:0.08em;color:var(--green)}
-#topbar .sep{color:var(--green-dim)}
-#topbar .sub{font-size:11px;color:var(--green-dim);letter-spacing:0.06em;text-transform:uppercase}
-#live-dot{margin-left:auto;font-size:11px;letter-spacing:0.08em}
-#auto-label{font-size:11px;color:var(--green-dim)}
+.mark{
+  width:22px;height:22px;border-radius:6px;
+  background:var(--rust);
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:13px;font-weight:600;color:var(--bg);
+  flex-shrink:0;
+}
+.title{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+.title .dim{color:var(--ink-faint);font-weight:400;margin-left:8px;font-size:13px}
+.status-pill{
+  margin-left:auto;display:flex;align-items:center;gap:7px;
+  font-family:var(--mono);font-size:12px;color:var(--ink-soft);
+  padding:5px 11px;border:1px solid var(--border);border-radius:999px;
+}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ink-faint);transition:background .3s}
+.dot.live{background:var(--sage);box-shadow:0 0 0 3px rgba(157,174,139,0.15)}
+.dot.err{background:var(--rose)}
 
-/* STATS STRIP */
-#statsbar{
-  display:flex;gap:0;flex-shrink:0;
-  border-bottom:1px solid var(--border);background:var(--bg2);
+/* STATS */
+.stats{
+  display:grid;grid-template-columns:repeat(5,1fr) 1.4fr;
+  border-bottom:1px solid var(--border-soft);flex-shrink:0;
 }
-.sblock{
-  padding:10px 18px;border-right:1px solid var(--border);
-  display:flex;flex-direction:column;gap:2px;
-}
-.sblock:last-child{border-right:none}
-.slabel{font-size:9px;color:var(--green-dim);letter-spacing:0.12em;text-transform:uppercase}
-.sval{font-size:20px;font-weight:700;color:var(--cyan);line-height:1}
-.sval.good{color:var(--green)}
-.sval.warn{color:var(--amber)}
-.sval.na{color:var(--green-dim)}
-#bar-block{flex:1;display:flex;flex-direction:column;justify-content:center;padding:10px 18px;gap:6px}
-.bartrack{height:3px;background:var(--green-dim);border-radius:2px;overflow:hidden}
-.barfill{height:100%;background:var(--green);border-radius:2px;transition:width .6s ease}
-#cl-line{font-size:10px;color:var(--green-dim);letter-spacing:0.04em}
-#cl-line.active{color:var(--cyan)}
+.stat{padding:13px 20px;border-right:1px solid var(--border-soft)}
+.stat:last-child{border-right:none}
+.stat .k{font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;color:var(--ink-faint);text-transform:uppercase;margin-bottom:5px}
+.stat .v{font-family:var(--mono);font-size:19px;font-weight:500;color:var(--ink);line-height:1}
+.stat .v.sage{color:var(--sage)}
+.stat .v.gold{color:var(--gold)}
+.stat .v.rust{color:var(--rust)}
+.stat .v.faint{color:var(--ink-faint)}
+.cl{display:flex;flex-direction:column;justify-content:center;gap:8px;padding:13px 20px}
+.track{height:4px;background:var(--border);border-radius:3px;overflow:hidden}
+.fill{height:100%;width:0;background:linear-gradient(90deg,var(--rust),var(--gold));border-radius:3px;transition:width .7s cubic-bezier(.4,0,.2,1)}
+.cl-txt{font-family:var(--mono);font-size:11px;color:var(--ink-faint);letter-spacing:0.02em}
+.cl-txt.on{color:var(--sage)}
 
-/* MAIN TERMINAL */
-#terminal{
-  flex:1;overflow:hidden;display:flex;flex-direction:column;
-  padding:12px 16px 0;gap:0;
-}
-#log{
-  flex:1;overflow-y:auto;font-size:12px;line-height:1.75;
-  padding-bottom:4px;
-}
-#log::-webkit-scrollbar{width:4px}
-#log::-webkit-scrollbar-track{background:transparent}
-#log::-webkit-scrollbar-thumb{background:var(--green-dim);border-radius:2px}
-.ll{display:flex;gap:10px;align-items:baseline}
-.lt{color:var(--green-dim);flex-shrink:0;font-size:11px}
-.lc{color:var(--amber)}
-.lo{color:var(--bone)}
-.ls{color:var(--green-dim);font-style:italic}
-.ler{color:var(--red)}
-.lh{color:var(--cyan)}
-.lsw{color:var(--amber);font-weight:700}
+/* TERMINAL */
+.term{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:8px 20px 0}
+.log{flex:1;overflow-y:auto;padding:8px 0;font-family:var(--mono);font-size:13px;line-height:1.7}
+.log::-webkit-scrollbar{width:5px}
+.log::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.log::-webkit-scrollbar-track{background:transparent}
+.row{display:flex;gap:12px;align-items:baseline;padding:1px 0}
+.row .t{color:var(--ink-faint);font-size:11px;flex-shrink:0;width:62px}
+.cmd{color:var(--rust)}
+.out{color:var(--ink)}
+.sys{color:var(--ink-soft);font-style:italic}
+.err{color:var(--rose)}
+.head{color:var(--ink);font-weight:600;font-family:var(--sans)}
+.sw{color:var(--gold);font-weight:600}
+.kbd{color:var(--ink-soft)}
+.accent{color:var(--rust)}
 
-/* INPUT ROW */
-#inputrow{
-  display:flex;align-items:center;gap:8px;
-  padding:10px 0 12px;border-top:1px solid var(--border);margin-top:8px;
+/* INPUT */
+.inputbar{
+  display:flex;align-items:center;gap:11px;
+  margin:6px 0 16px;padding:13px 15px;
+  background:var(--bg-input);border:1px solid var(--border);border-radius:11px;
+  transition:border-color .2s;
 }
-#prompt{color:var(--green);font-weight:700;user-select:none}
-#cmdinput{
+.inputbar:focus-within{border-color:var(--rust)}
+.chev{color:var(--rust);font-family:var(--mono);font-size:14px;user-select:none}
+#cmd{
   flex:1;background:none;border:none;outline:none;
-  color:var(--green);font:13px/1 var(--font);
-  caret-color:var(--green);
+  color:var(--ink);font-family:var(--mono);font-size:13.5px;
+  caret-color:var(--rust);
 }
-#cmdinput::placeholder{color:var(--green-dim)}
-#spinner{color:var(--amber);display:none;animation:spin 1s linear infinite;font-size:14px}
-@keyframes spin{to{transform:rotate(360deg)}}
+#cmd::placeholder{color:var(--ink-faint)}
+#cmd:disabled{opacity:.5}
+.spin{display:none;color:var(--gold);font-family:var(--mono);animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media(max-width:720px){
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .stat:nth-child(5),.cl{grid-column:span 2}
+  .stat{border-right:none;border-bottom:1px solid var(--border-soft)}
+}
 </style>
 </head>
 <body>
 
-<div id="topbar">
-  <span class="logo">DOT</span>
-  <span class="sep">/</span>
-  <span class="sub">evolving neuron runtime</span>
-  <span id="live-dot" style="color:var(--green-dim)">○ connecting</span>
-  <span id="auto-label"></span>
-</div>
+<header>
+  <div class="mark">D</div>
+  <div class="title">DOT<span class="dim">evolving neuron</span></div>
+  <div class="status-pill"><span class="dot" id="dot"></span><span id="state">connecting</span></div>
+</header>
 
-<div id="statsbar">
-  <div class="sblock">
-    <div class="slabel">generation</div>
-    <div class="sval na" id="s-gen">—</div>
-  </div>
-  <div class="sblock">
-    <div class="slabel">best fitness</div>
-    <div class="sval na" id="s-fit">—</div>
-  </div>
-  <div class="sblock">
-    <div class="slabel">task</div>
-    <div class="sval na" id="s-task">—</div>
-  </div>
-  <div class="sblock">
-    <div class="slabel">mse task_a</div>
-    <div class="sval na" id="s-ma">—</div>
-  </div>
-  <div class="sblock">
-    <div class="slabel">mse task_b</div>
-    <div class="sval na" id="s-mb">—</div>
-  </div>
-  <div id="bar-block">
-    <div class="bartrack"><div class="barfill" id="s-bar" style="width:0"></div></div>
-    <div id="cl-line">continual learning —</div>
+<div class="stats">
+  <div class="stat"><div class="k">generation</div><div class="v faint" id="s-gen">—</div></div>
+  <div class="stat"><div class="k">best fitness</div><div class="v faint" id="s-fit">—</div></div>
+  <div class="stat"><div class="k">task</div><div class="v faint" id="s-task">—</div></div>
+  <div class="stat"><div class="k">mse a</div><div class="v faint" id="s-ma">—</div></div>
+  <div class="stat"><div class="k">mse b</div><div class="v faint" id="s-mb">—</div></div>
+  <div class="cl">
+    <div class="track"><div class="fill" id="s-bar"></div></div>
+    <div class="cl-txt" id="s-cl">continual learning —</div>
   </div>
 </div>
 
-<div id="terminal">
-  <div id="log"></div>
-  <div id="inputrow">
-    <span id="prompt">$</span>
-    <input id="cmdinput" placeholder="run [N] · status · help · clear" autocomplete="off" spellcheck="false">
-    <span id="spinner">⟳</span>
+<div class="term">
+  <div class="log" id="log"></div>
+  <div class="inputbar">
+    <span class="chev">›</span>
+    <input id="cmd" placeholder="run [N] · status · help · clear" autocomplete="off" spellcheck="false">
+    <span class="spin" id="spin">⟳</span>
   </div>
 </div>
 
 <script>
-const $log   = document.getElementById('log');
-const $cmd   = document.getElementById('cmdinput');
-const $spin  = document.getElementById('spinner');
-const $live  = document.getElementById('live-dot');
-const $auto  = document.getElementById('auto-label');
+const $log=document.getElementById('log'),$cmd=document.getElementById('cmd'),
+      $spin=document.getElementById('spin'),$dot=document.getElementById('dot'),
+      $state=document.getElementById('state');
+let hist=[],hIdx=-1,busy=false,tick=null,cd=30;
+const ts=()=>new Date().toTimeString().slice(0,8);
 
-let hist=[], hIdx=-1, busy=false, autoTimer=null, countdown=30, tickTimer=null;
-
-const ts = () => new Date().toTimeString().slice(0,8);
-
-function line(text, cls){
-  const d=document.createElement('div');
-  d.className='ll';
-  d.innerHTML=`<span class="lt">[${ts()}]</span><span class="${cls}">${text}</span>`;
-  $log.appendChild(d);
-  $log.scrollTop=$log.scrollHeight;
+function row(html,cls){
+  const d=document.createElement('div');d.className='row';
+  d.innerHTML=`<span class="t">${ts()}</span><span class="${cls}">${html}</span>`;
+  $log.appendChild(d);$log.scrollTop=$log.scrollHeight;
+}
+function plain(html){
+  const d=document.createElement('div');d.className='row';
+  d.innerHTML=`<span class="t"></span><span>${html}</span>`;
+  $log.appendChild(d);$log.scrollTop=$log.scrollHeight;
 }
 
-function applyStats(d){
-  const fit = d.best_fitness ?? 0;
-  const gen = d.total_generations ?? 0;
-
-  const sg = document.getElementById('s-gen');
-  sg.textContent = gen;
-  sg.className = 'sval good';
-
-  const sf = document.getElementById('s-fit');
-  sf.textContent = fit.toFixed(4);
-  sf.className = 'sval ' + (fit>0.95?'good':fit>0.7?'':'warn');
-
-  const st = document.getElementById('s-task');
-  st.textContent = d.current_task ? 'task_'+d.current_task : '—';
-  st.className = 'sval ' + (d.current_task?'':'na');
-
-  document.getElementById('s-ma').textContent = d.mse_task_a?.toFixed(4)??'—';
-  document.getElementById('s-ma').className = 'sval ' + (d.mse_task_a<0.01?'good':d.mse_task_a<0.1?'':'warn');
-  document.getElementById('s-mb').textContent = d.mse_task_b?.toFixed(4)??'—';
-
-  document.getElementById('s-bar').style.width = (fit*100).toFixed(1)+'%';
-
-  const cl = document.getElementById('cl-line');
-  if(d.continual_learning_active){
-    cl.textContent='● continual learning active — EWC + replay';
-    cl.className='cl-line active';
-  } else {
-    const eta = gen<600 ? ` — activates at gen 600 (${600-gen} to go)` : '';
-    cl.textContent='○ continual learning inactive'+eta;
-    cl.className='cl-line';
-  }
-
-  $live.textContent='● live';
-  $live.style.color='var(--green)';
+function apply(d){
+  const fit=d.best_fitness??0,gen=d.total_generations??0;
+  const g=document.getElementById('s-gen');g.textContent=gen;g.className='v sage';
+  const f=document.getElementById('s-fit');f.textContent=fit.toFixed(4);
+  f.className='v '+(fit>0.95?'sage':fit>0.7?'rust':'gold');
+  const t=document.getElementById('s-task');
+  t.textContent=d.current_task?'task_'+d.current_task:'—';t.className='v '+(d.current_task?'rust':'faint');
+  const ma=document.getElementById('s-ma');ma.textContent=d.mse_task_a?.toFixed(4)??'—';
+  ma.className='v '+(d.mse_task_a<0.01?'sage':d.mse_task_a<0.15?'':'gold');
+  document.getElementById('s-mb').textContent=d.mse_task_b?.toFixed(4)??'—';
+  document.getElementById('s-bar').style.width=(fit*100).toFixed(1)+'%';
+  const cl=document.getElementById('s-cl');
+  if(d.continual_learning_active){cl.textContent='continual learning active — EWC + replay';cl.className='cl-txt on';}
+  else{const e=gen<600?` · activates at gen 600 (${600-gen} left)`:'';cl.textContent='continual learning idle'+e;cl.className='cl-txt';}
+  $dot.className='dot live';$state.textContent='live';
 }
 
-function setBusy(v){
-  busy=v;
-  $spin.style.display=v?'inline':'none';
-  $cmd.disabled=v;
-}
-
-function resetAutoCountdown(){
-  clearInterval(tickTimer);
-  countdown=30;
-  tickTimer=setInterval(()=>{
-    countdown--;
-    $auto.textContent=`auto-refresh in ${countdown}s`;
-    if(countdown<=0){ doStatus(true); resetAutoCountdown(); }
-  },1000);
-  $auto.textContent=`auto-refresh in ${countdown}s`;
-}
+function setBusy(v){busy=v;$spin.style.display=v?'inline':'none';$cmd.disabled=v;}
+function resetCd(){clearInterval(tick);cd=30;tick=setInterval(()=>{cd--;$state.textContent='live · refresh '+cd+'s';if(cd<=0){doStatus(true);resetCd();}},1000);}
 
 async function doStatus(silent){
   try{
-    const r=await fetch('/api/status');
-    if(!r.ok) throw new Error(r.status);
-    const d=await r.json();
-    applyStats(d);
-    if(!silent) line(JSON.stringify(d),'lo');
-  }catch(e){
-    $live.textContent='✕ error';
-    $live.style.color='var(--red)';
-    if(!silent) line('fetch /api/status failed: '+e,'ler');
-  }
+    const r=await fetch('/api/status');if(!r.ok)throw r.status;
+    const d=await r.json();apply(d);
+    if(!silent)row(JSON.stringify(d),'out');
+  }catch(e){$dot.className='dot err';$state.textContent='error';if(!silent)row('status failed: '+e,'err');}
 }
-
-async function doRun(gens){
-  if(busy){line('already running, wait...','ls');return;}
-  setBusy(true);
-  line(`run ${gens}`,'lc');
-  line('evolving...','ls');
+async function doRun(n){
+  if(busy){row('busy — wait for current run','sys');return;}
+  setBusy(true);row('run '+n,'cmd');row('evolving '+n+' generations…','sys');
   try{
-    const r=await fetch('/api/evolve?generations='+gens);
-    if(!r.ok) throw new Error(r.status);
-    const d=await r.json();
-    applyStats(d);
-    const sw=d.switched_task_this_call?` <span class="lsw">★ task switch → ${d.current_task}</span>`:'';
-    line(`✓ gen=${d.total_generations} &nbsp;fit=${d.best_fitness} &nbsp;mse_a=${d.mse_task_a} &nbsp;mse_b=${d.mse_task_b}${sw}`,'lo');
-    if(d.continual_learning_active && !d.switched_task_this_call)
-      line('   EWC + replay active — old task memory protected','ls');
-  }catch(e){
-    line('error: '+e,'ler');
-  }
-  setBusy(false);
-  resetAutoCountdown();
+    const r=await fetch('/api/evolve?generations='+n);if(!r.ok)throw r.status;
+    const d=await r.json();apply(d);
+    const sw=d.switched_task_this_call?` <span class="sw">★ task switch → task_${d.current_task}</span>`:'';
+    row(`done · gen ${d.total_generations} · fit ${d.best_fitness} · mse_a ${d.mse_task_a} · mse_b ${d.mse_task_b}${sw}`,'out');
+    if(d.continual_learning_active&&!d.switched_task_this_call)row('EWC + replay protecting prior task','sys');
+  }catch(e){row('error: '+e,'err');}
+  setBusy(false);resetCd();
 }
-
-function handleCmd(raw){
-  const p=raw.trim().split(/\s+/);
-  const c=p[0].toLowerCase();
-  if(c==='run'){
-    doRun(Math.max(1,Math.min(parseInt(p[1])||50,500)));
-  }else if(c==='status'){
-    line('status','lc');
-    doStatus(false);
-  }else if(c==='clear'){
-    $log.innerHTML='';
-  }else if(c==='help'){
-    [
-      '<span class="lh">available commands</span>',
-      '  <span class="lc">run [N]</span>   &nbsp;evolve N generations (default 50, max 500)',
-      '  <span class="lc">status</span>    &nbsp;read current state from Redis without evolving',
-      '  <span class="lc">clear</span>     &nbsp;clear terminal output',
-      '  <span class="lc">help</span>      &nbsp;show this message',
-      '',
-      '  <span class="ls">↑ ↓ arrow keys navigate command history</span>',
-    ].forEach(t=>{
-      const d=document.createElement('div');
-      d.className='ll';
-      d.innerHTML=`<span class="lt">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span>${t}</span>`;
-      $log.appendChild(d);
-    });
-    $log.scrollTop=$log.scrollHeight;
-  }else{
-    line(`unknown: ${c} — type help`,'ler');
+function cmd(raw){
+  const p=raw.trim().split(/\s+/),c=p[0].toLowerCase();
+  if(c==='run')doRun(Math.max(1,Math.min(parseInt(p[1])||50,500)));
+  else if(c==='status'){row('status','cmd');doStatus(false);}
+  else if(c==='clear')$log.innerHTML='';
+  else if(c==='help'){
+    plain('<span class="head">commands</span>');
+    plain('<span class="accent">run [N]</span>  evolve N generations · default 50 · max 500');
+    plain('<span class="accent">status</span>   read state from Redis without evolving');
+    plain('<span class="accent">clear</span>    clear output');
+    plain('<span class="accent">help</span>     show this');
+    plain('<span class="kbd">↑ ↓  command history</span>');
   }
+  else row('unknown command: '+c+' — try help','err');
 }
-
-$cmd.addEventListener('keydown', e=>{
-  if(e.key==='Enter'){
-    const v=$cmd.value.trim();
-    if(!v)return;
-    hist.unshift(v); hIdx=-1; $cmd.value='';
-    handleCmd(v);
-  }else if(e.key==='ArrowUp'){
-    e.preventDefault();
-    hIdx=Math.min(hIdx+1,hist.length-1);
-    $cmd.value=hist[hIdx]??'';
-  }else if(e.key==='ArrowDown'){
-    e.preventDefault();
-    hIdx=Math.max(hIdx-1,-1);
-    $cmd.value=hIdx<0?'':hist[hIdx];
-  }
+$cmd.addEventListener('keydown',e=>{
+  if(e.key==='Enter'){const v=$cmd.value.trim();if(!v)return;hist.unshift(v);hIdx=-1;$cmd.value='';cmd(v);}
+  else if(e.key==='ArrowUp'){e.preventDefault();hIdx=Math.min(hIdx+1,hist.length-1);$cmd.value=hist[hIdx]??'';}
+  else if(e.key==='ArrowDown'){e.preventDefault();hIdx=Math.max(hIdx-1,-1);$cmd.value=hIdx<0?'':hist[hIdx];}
 });
 
-// boot
-line('<span class="lh">DOT evolving neuron terminal</span>','lo');
-line('type <span class="lc">help</span> to see commands &nbsp;·&nbsp; status polls every 30s','ls');
-line('','ls');
-doStatus(true);
-resetAutoCountdown();
+plain('<span class="head">DOT — self-evolving neuron</span>');
+plain('<span class="sys">a single neuron that evolves on its own, persisting state across runs.</span>');
+plain('<span class="sys">type <span class="accent">help</span> for commands · state auto-refreshes every 30s</span>');
+plain('&nbsp;');
+doStatus(true);resetCd();
 </script>
 </body>
 </html>"""
