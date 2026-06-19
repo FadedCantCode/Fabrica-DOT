@@ -853,8 +853,14 @@ async function sendMsg(){
     }
     if(d.reply){
       typBub.textContent=d.reply;typBub.parentElement.classList.remove('typing');
-      if(!d.reply.startsWith('⚠️')&&!d.reply.startsWith('⏳'))
+      const ok=!d.reply.startsWith('⚠️');
+      if(ok){
         chatHistory.push({role:'assistant',content:d.reply});
+        // 儲存對話到 Redis(非阻塞)
+        fetch('/api/chat/store',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({turns:[{role:'user',content:txt},{role:'assistant',content:d.reply}]})
+        }).catch(()=>{});
+      }
     } else {
       typBub.textContent='⚠️ '+(d.error||JSON.stringify(d));
       typBub.parentElement.classList.remove('typing');
@@ -949,28 +955,19 @@ async def reset_system_endpoint():
     return JSONResponse({"ok": True, "prompt": DEFAULT_SYSTEM})
 
 
-@app.post("/api/chat")
-async def chat_endpoint(request: Request):
+@app.post("/api/chat/store")
+async def chat_store_endpoint(request: Request):
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "invalid JSON"}, status_code=400)
-    messages = body.get("messages", [])
-    system   = body.get("system", "") or get_system_prompt()
-    if not messages:
-        return JSONResponse({"error": "no messages"}, status_code=400)
-    reply = sync_chat(messages, system)
-    # 儲存對話
-    last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), None)
-    turns = []
-    if last_user:
-        turns.append({"role": "user", "content": last_user})
-    turns.append({"role": "assistant", "content": reply})
-    try:
-        append_turns(turns)
-    except Exception:
-        pass
-    return JSONResponse({"reply": reply})
+    turns = body.get("turns", [])
+    if turns:
+        try:
+            append_turns(turns)
+        except Exception:
+            pass
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/chat/history")
