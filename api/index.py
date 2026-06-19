@@ -291,6 +291,8 @@ SYS_KEY   = "dot_system_prompt"
 
 HF_TOKEN    = os.environ.get("HF_API_TOKEN")
 HF_MODEL_ID = os.environ.get("HF_MODEL_ID", "Qwen/Qwen2.5-0.5B-Instruct")
+GROQ_KEY    = os.environ.get("GROQ_API_KEY")
+GROQ_MODEL  = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
 
 DEFAULT_SYSTEM = (
     "You are DOT, a concise and thoughtful AI assistant. "
@@ -871,12 +873,15 @@ async def evolve_endpoint(request: Request, generations: int = Query(default=GEN
 
 @app.get("/api/system")
 async def get_system_endpoint():
-    # 把 hf_token 一起回傳,讓瀏覽器直接打 HF API(繞開 Python sandbox 限制)
+    using_groq = bool(GROQ_KEY)
+    active_model = GROQ_MODEL if using_groq else HF_MODEL_ID
+    provider = "Groq" if using_groq else "HuggingFace"
     return JSONResponse({
         "prompt": get_system_prompt(),
-        "model": HF_MODEL_ID,
+        "model": active_model,
+        "provider": provider,
         "hf_token": HF_TOKEN or "",
-        "hf_ready": bool(HF_TOKEN),
+        "hf_ready": bool(HF_TOKEN) or using_groq,
     })
 
 
