@@ -1,4 +1,4 @@
-
+{
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "builds": [
     { "src": "api/index.py", "use": "@vercel/python" }
@@ -10,4 +10,3 @@
     { "path": "/api/evolve", "schedule": "0 3 * * *" }
   ]
 }
-
