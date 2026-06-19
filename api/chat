@@ -1,14 +1,19 @@
 // api/chat.js — Node.js 18+ serverless function
-// maxDuration: 60 applies on Pro plan; Hobby plan is capped at 10s
+// 使用 Groq API:免費、無冷啟動、< 1 秒回應、OpenAI 相容格式
+// 如果沒有 GROQ_API_KEY 才 fallback 到 HF(有冷啟動問題)
 'use strict';
 
 module.exports.config = { maxDuration: 60 };
 
 var REDIS_URL   = process.env.UPSTASH_REDIS_REST_URL  || process.env.KV_REST_API_URL;
 var REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+var GROQ_KEY    = process.env.GROQ_API_KEY;
 var HF_TOKEN    = process.env.HF_API_TOKEN;
-var MODEL_ID    = process.env.HF_MODEL_ID || 'Qwen/Qwen2.5-0.5B-Instruct';
+var HF_MODEL    = process.env.HF_MODEL_ID || 'Qwen/Qwen2.5-0.5B-Instruct';
 var DEFAULT_SYS = 'You are DOT, a concise and helpful AI assistant.';
+
+// Groq 免費模型(任選一個)
+var GROQ_MODEL  = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 
 async function redisCmd() {
   var args = Array.prototype.slice.call(arguments);
@@ -19,6 +24,46 @@ async function redisCmd() {
     body: JSON.stringify(args)
   });
   return r.json();
+}
+
+async function callGroq(messages, system) {
+  var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages: [{ role: 'system', content: system }].concat(messages),
+      max_tokens: 512,
+      temperature: 0.7
+    })
+  });
+  var data = await r.json();
+  if (!data.choices) throw new Error(JSON.stringify(data).slice(0, 200));
+  return data.choices[0].message.content;
+}
+
+async function callHF(messages, system) {
+  var r = await fetch('https://api-inference.huggingface.co/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + HF_TOKEN,
+      'Content-Type': 'application/json',
+      'x-wait-for-model': 'true'
+    },
+    body: JSON.stringify({
+      model: HF_MODEL,
+      messages: [{ role: 'system', content: system }].concat(messages),
+      max_tokens: 512,
+      temperature: 0.7
+    })
+  });
+  if (r.status === 503) {
+    var e = await r.json().catch(function() { return {}; });
+    throw new Error('model_loading:' + (e.estimated_time || 30));
+  }
+  var data = await r.json();
+  if (!data.choices) throw new Error(JSON.stringify(data).slice(0, 200));
+  return data.choices[0].message.content;
 }
 
 module.exports = async function handler(req, res) {
@@ -38,46 +83,27 @@ module.exports = async function handler(req, res) {
     } catch(e) { system = DEFAULT_SYS; }
   }
 
-  if (!HF_TOKEN) {
-    return res.json({ reply: '⚠️ HF_API_TOKEN 未設定。請在 Vercel 環境變數加入後 redeploy。' });
+  if (!GROQ_KEY && !HF_TOKEN) {
+    return res.json({ reply: '⚠️ 請在 Vercel 環境變數設定 GROQ_API_KEY(推薦)或 HF_API_TOKEN。' });
   }
 
   var reply;
   try {
-    var hfRes = await fetch('https://api-inference.huggingface.co/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + HF_TOKEN,
-        'Content-Type': 'application/json',
-        'x-wait-for-model': 'true'   // 等模型載入完再回應,不要回 503
-      },
-      body: JSON.stringify({
-        model: MODEL_ID,
-        messages: [{ role: 'system', content: system }].concat(messages),
-        max_tokens: 512,
-        temperature: 0.7
-      })
-    });
-
-    if (hfRes.status === 503) {
-      var errBody = await hfRes.json().catch(function() { return {}; });
-      var eta = errBody.estimated_time || 30;
-      return res.json({
-        reply: '⏳ 模型正在冷啟動中，預計 ' + Math.ceil(eta) + ' 秒後就緒。請稍後再試。'
-      });
+    if (GROQ_KEY) {
+      reply = await callGroq(messages, system);
+    } else {
+      reply = await callHF(messages, system);
     }
-
-    var data = await hfRes.json();
-    if (!data.choices) {
-      return res.json({ reply: '⚠️ HF API 異常: ' + JSON.stringify(data).slice(0, 200) });
-    }
-    reply = data.choices[0].message.content;
-
   } catch(e) {
-    return res.json({ reply: '⚠️ HF error: ' + String(e) });
+    var msg = String(e);
+    if (msg.startsWith('Error: model_loading:')) {
+      var eta = msg.split(':')[2] || '30';
+      return res.json({ reply: '⏳ HF 模型冷啟動中，預計 ' + Math.ceil(eta) + ' 秒。建議改用 Groq(免費無冷啟動)。' });
+    }
+    return res.json({ reply: '⚠️ ' + msg });
   }
 
-  // 儲存對話歷史 (non-fatal)
+  // 儲存對話
   try {
     var lastUser = null;
     for (var i = messages.length - 1; i >= 0; i--) {
