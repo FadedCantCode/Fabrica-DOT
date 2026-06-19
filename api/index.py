@@ -339,8 +339,12 @@ def _call_api(url: str, token: str, payload: dict) -> str:
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")[:300]
+        raise ValueError(f"HTTP {e.code}: {body}")
     if "choices" not in data:
         raise ValueError(json.dumps(data)[:200])
     return data["choices"][0]["message"]["content"]
@@ -355,6 +359,7 @@ def sync_chat(messages: list, system: str) -> str:
         "temperature": 0.7,
     }
     if GROQ_KEY:
+        key_hint = GROQ_KEY[:8] + "..." if len(GROQ_KEY) > 8 else "?"
         try:
             return _call_api(
                 "https://api.groq.com/openai/v1/chat/completions",
@@ -362,7 +367,7 @@ def sync_chat(messages: list, system: str) -> str:
                 {**payload_base, "model": GROQ_MODEL},
             )
         except Exception as e:
-            return f"⚠️ Groq error: {e}"
+            return f"⚠️ Groq error (key={key_hint}): {e}"
     try:
         return _call_api(
             "https://api-inference.huggingface.co/v1/chat/completions",
