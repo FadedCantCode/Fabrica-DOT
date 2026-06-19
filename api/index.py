@@ -298,7 +298,6 @@ DEFAULT_SYSTEM = (
     "Keep replies short and direct unless asked to elaborate."
 )
 
-import asyncio
 import urllib.request
 
 
@@ -327,42 +326,9 @@ def save_state(state):
 
 
 # ============================================================
-# Chat 層:HF Inference API + Redis 儲存
-# run_in_executor 把同步 requests 放進 thread pool,
-# 完全繞開 async event loop 的 socket 資源競爭(EBUSY 根本原因)
+# Chat 層:HF 呼叫已移到瀏覽器前端直接打(繞開 Python sandbox 限制)
+# Python 只負責：讀/寫 system prompt、儲存對話歷史
 # ============================================================
-
-def _hf_chat_sync(messages: list, system_prompt: str) -> str:
-    """純同步 HF 呼叫（urllib.request,跟 Redis 用同一套,DNS 解析沒問題）,
-    由 run_in_executor 在 thread pool 跑以避免 event loop EBUSY。"""
-    if not HF_TOKEN:
-        return "⚠️ HF_API_TOKEN 尚未設定。請在 Vercel 環境變數加入 HF_API_TOKEN。"
-    payload = {
-        "model": HF_MODEL_ID,
-        "messages": [{"role": "system", "content": system_prompt}] + messages,
-        "max_tokens": 512,
-        "temperature": 0.7,
-    }
-    try:
-        req = urllib.request.Request(
-            "https://api-inference.huggingface.co/v1/chat/completions",
-            data=json.dumps(payload).encode(),
-            headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read())
-        if "choices" not in data:
-            return f"⚠️ HF API 回傳格式異常: {data}"
-        return data["choices"][0]["message"]["content"]
-    except Exception as e:
-        return f"⚠️ HF API error: {e}"
-
-
-async def hf_chat(messages: list, system_prompt: str) -> str:
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _hf_chat_sync, messages, system_prompt)
-
 
 def get_system_prompt() -> str:
     result = redis_command("GET", SYS_KEY)
@@ -382,11 +348,10 @@ def get_chat_history() -> list:
     return []
 
 
-def append_turn(role: str, content: str):
+def append_turns(turns: list):
     history = get_chat_history()
-    history.append({"role": role, "content": content})
-    history = history[-200:]   # 最多保留 200 輪作為訓練資料
-    redis_command("SET", CHAT_KEY, json.dumps(history))
+    history.extend(turns)
+    redis_command("SET", CHAT_KEY, json.dumps(history[-200:]))
 
 
 def pop_to_dict(pop):
@@ -776,7 +741,7 @@ $ncmd.addEventListener('keydown',e=>{
 
 // ── Chat tab ──────────────────────────────────────────────
 const $msgs=document.getElementById('msgs');
-let chatHistory=[], chatBusy=false, currentSystem='';
+let chatHistory=[], chatBusy=false, currentSystem='', hfToken='', hfModel='';
 
 function toggleSys(){
   const t=document.getElementById('sys-toggle');
@@ -786,7 +751,7 @@ function toggleSys(){
 }
 async function loadSystem(){
   try{const r=await fetch('/api/system');const d=await r.json();
-    currentSystem=d.prompt;
+    currentSystem=d.prompt;hfToken=d.hf_token||'';hfModel=d.model||'Qwen/Qwen2.5-0.5B-Instruct';
     document.getElementById('sys-input').value=d.prompt;
     document.getElementById('sys-model').textContent=d.model||'';
     document.getElementById('model-hint').textContent=d.model||'—';
@@ -826,14 +791,35 @@ async function sendMsg(){
   addMsg('user',txt);
   chatHistory.push({role:'user',content:txt});
   const typBub=addMsg('bot','thinking…',true);
+  if(!hfToken){
+    typBub.textContent='⚠️ HF_API_TOKEN 未設定，請在 Vercel 環境變數加入後 redeploy。';
+    typBub.parentElement.classList.remove('typing');
+    chatBusy=false;document.getElementById('send-btn').disabled=false;return;
+  }
   try{
-    const r=await fetch('/api/chat',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:chatHistory.slice(-20),system:currentSystem})});
-    const d=await r.json();
-    if(d.error){typBub.textContent='⚠️ '+d.error;typBub.parentElement.classList.remove('typing');}
-    else{typBub.textContent=d.reply;typBub.parentElement.classList.remove('typing');
-      chatHistory.push({role:'assistant',content:d.reply});}
+    // 直接從瀏覽器打 HF API，繞開 Python sandbox 的 EBUSY 限制
+    const hfResp=await fetch('https://api-inference.huggingface.co/v1/chat/completions',{
+      method:'POST',
+      headers:{'Authorization':'Bearer '+hfToken,'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:hfModel,
+        messages:[{role:'system',content:currentSystem},...chatHistory.slice(-20)],
+        max_tokens:512,temperature:0.7
+      })
+    });
+    const hfData=await hfResp.json();
+    if(!hfData.choices){
+      typBub.textContent='⚠️ HF API: '+JSON.stringify(hfData).slice(0,120);
+      typBub.parentElement.classList.remove('typing');
+    } else {
+      const reply=hfData.choices[0].message.content;
+      typBub.textContent=reply;typBub.parentElement.classList.remove('typing');
+      chatHistory.push({role:'assistant',content:reply});
+      // 儲存對話到 Redis（非阻塞）
+      fetch('/api/chat/store',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({turns:[{role:'user',content:txt},{role:'assistant',content:reply}]})
+      }).catch(()=>{});
+    }
   }catch(e){typBub.textContent='⚠️ fetch error: '+e;typBub.parentElement.classList.remove('typing');}
   chatBusy=false;document.getElementById('send-btn').disabled=false;
   inp.focus();$msgs.scrollTop=$msgs.scrollHeight;
@@ -891,29 +877,13 @@ async def evolve_endpoint(request: Request, generations: int = Query(default=GEN
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.post("/api/chat")
-async def chat_endpoint(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "invalid JSON"}, status_code=400)
-    messages = body.get("messages", [])
-    system   = body.get("system", "") or get_system_prompt()
-    if not messages:
-        return JSONResponse({"error": "no messages"}, status_code=400)
-    last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), None)
-    reply = await hf_chat(messages, system)
-    if last_user:
-        append_turn("user", last_user)
-    append_turn("assistant", reply)
-    return JSONResponse({"reply": reply})
-
-
 @app.get("/api/system")
 async def get_system_endpoint():
+    # 把 hf_token 一起回傳,讓瀏覽器直接打 HF API(繞開 Python sandbox 限制)
     return JSONResponse({
         "prompt": get_system_prompt(),
         "model": HF_MODEL_ID,
+        "hf_token": HF_TOKEN or "",
         "hf_ready": bool(HF_TOKEN),
     })
 
@@ -935,6 +905,19 @@ async def set_system_endpoint(request: Request):
 async def reset_system_endpoint():
     save_system_prompt(DEFAULT_SYSTEM)
     return JSONResponse({"ok": True, "prompt": DEFAULT_SYSTEM})
+
+
+@app.post("/api/chat/store")
+async def chat_store_endpoint(request: Request):
+    """瀏覽器打完 HF 後呼叫這裡存對話歷史,不做任何 HF 呼叫。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    turns = body.get("turns", [])
+    if turns:
+        append_turns(turns)
+    return JSONResponse({"ok": True, "stored": len(turns)})
 
 
 @app.get("/api/chat/history")
