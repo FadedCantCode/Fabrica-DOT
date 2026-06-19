@@ -299,7 +299,6 @@ DEFAULT_SYSTEM = (
 )
 
 import asyncio
-import requests as _requests
 import urllib.request
 
 
@@ -334,7 +333,8 @@ def save_state(state):
 # ============================================================
 
 def _hf_chat_sync(messages: list, system_prompt: str) -> str:
-    """純同步 HF 呼叫,由 run_in_executor 在 thread pool 跑。"""
+    """純同步 HF 呼叫（urllib.request,跟 Redis 用同一套,DNS 解析沒問題）,
+    由 run_in_executor 在 thread pool 跑以避免 event loop EBUSY。"""
     if not HF_TOKEN:
         return "⚠️ HF_API_TOKEN 尚未設定。請在 Vercel 環境變數加入 HF_API_TOKEN。"
     payload = {
@@ -344,13 +344,14 @@ def _hf_chat_sync(messages: list, system_prompt: str) -> str:
         "temperature": 0.7,
     }
     try:
-        resp = _requests.post(
+        req = urllib.request.Request(
             "https://api-inference.huggingface.co/v1/chat/completions",
-            json=payload,
-            headers={"Authorization": f"Bearer {HF_TOKEN}"},
-            timeout=60,
+            data=json.dumps(payload).encode(),
+            headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
+            method="POST",
         )
-        data = resp.json()
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read())
         if "choices" not in data:
             return f"⚠️ HF API 回傳格式異常: {data}"
         return data["choices"][0]["message"]["content"]
