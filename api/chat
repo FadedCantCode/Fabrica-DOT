@@ -1,6 +1,8 @@
-// api/chat.js — Vercel Node.js 18+ function
-// Node.js 18 has global fetch — no imports needed
+// api/chat.js — Node.js 18+ serverless function
+// maxDuration: 60 applies on Pro plan; Hobby plan is capped at 10s
 'use strict';
+
+module.exports.config = { maxDuration: 60 };
 
 var REDIS_URL   = process.env.UPSTASH_REDIS_REST_URL  || process.env.KV_REST_API_URL;
 var REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
@@ -24,11 +26,11 @@ module.exports = async function handler(req, res) {
 
   var body = req.body || {};
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch(e) { body = {}; } }
+  if (Buffer.isBuffer(body)) { try { body = JSON.parse(body.toString()); } catch(e) { body = {}; } }
 
   var messages = body.messages || [];
   var system   = body.system   || '';
 
-  // system prompt from Redis if not provided
   if (!system) {
     try {
       var d = await redisCmd('GET', 'dot_system_prompt');
@@ -36,13 +38,19 @@ module.exports = async function handler(req, res) {
     } catch(e) { system = DEFAULT_SYS; }
   }
 
-  if (!HF_TOKEN) return res.json({ reply: '⚠️ HF_API_TOKEN not set in Vercel env vars.' });
+  if (!HF_TOKEN) {
+    return res.json({ reply: '⚠️ HF_API_TOKEN 未設定。請在 Vercel 環境變數加入後 redeploy。' });
+  }
 
   var reply;
   try {
     var hfRes = await fetch('https://api-inference.huggingface.co/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + HF_TOKEN, 'Content-Type': 'application/json' },
+      headers: {
+        'Authorization': 'Bearer ' + HF_TOKEN,
+        'Content-Type': 'application/json',
+        'x-wait-for-model': 'true'   // 等模型載入完再回應,不要回 503
+      },
       body: JSON.stringify({
         model: MODEL_ID,
         messages: [{ role: 'system', content: system }].concat(messages),
@@ -50,14 +58,26 @@ module.exports = async function handler(req, res) {
         temperature: 0.7
       })
     });
+
+    if (hfRes.status === 503) {
+      var errBody = await hfRes.json().catch(function() { return {}; });
+      var eta = errBody.estimated_time || 30;
+      return res.json({
+        reply: '⏳ 模型正在冷啟動中，預計 ' + Math.ceil(eta) + ' 秒後就緒。請稍後再試。'
+      });
+    }
+
     var data = await hfRes.json();
-    if (!data.choices) return res.json({ reply: '⚠️ HF: ' + JSON.stringify(data).slice(0, 200) });
+    if (!data.choices) {
+      return res.json({ reply: '⚠️ HF API 異常: ' + JSON.stringify(data).slice(0, 200) });
+    }
     reply = data.choices[0].message.content;
+
   } catch(e) {
     return res.json({ reply: '⚠️ HF error: ' + String(e) });
   }
 
-  // store conversation (non-fatal)
+  // 儲存對話歷史 (non-fatal)
   try {
     var lastUser = null;
     for (var i = messages.length - 1; i >= 0; i--) {
