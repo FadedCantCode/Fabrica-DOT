@@ -795,10 +795,19 @@ async function sendMsg(){
     const r=await fetch('/api/chat',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({messages:chatHistory.slice(-20),system:currentSystem})});
-    const d=await r.json();
+    const txt=await r.text();
+    let d;
+    try{d=JSON.parse(txt);}catch(e){
+      // Vercel timeout 或其他非 JSON 回應(通常是 10s 冷啟動 timeout)
+      typBub.textContent='⏳ 模型冷啟動中或請求逾時，請等 30 秒後再試一次。';
+      typBub.parentElement.classList.remove('typing');
+      chatBusy=false;document.getElementById('send-btn').disabled=false;
+      inp.focus();return;
+    }
     if(d.reply){
       typBub.textContent=d.reply;typBub.parentElement.classList.remove('typing');
-      chatHistory.push({role:'assistant',content:d.reply});
+      if(!d.reply.startsWith('⚠️')&&!d.reply.startsWith('⏳'))
+        chatHistory.push({role:'assistant',content:d.reply});
     } else {
       typBub.textContent='⚠️ '+(d.error||JSON.stringify(d));
       typBub.parentElement.classList.remove('typing');
