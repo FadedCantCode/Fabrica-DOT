@@ -800,8 +800,9 @@ async function sendMsg(){
     const txt=await r.text();
     let d;
     try{d=JSON.parse(txt);}catch(e){
-      // Vercel timeout 或其他非 JSON 回應(通常是 10s 冷啟動 timeout)
-      typBub.textContent='⏳ 模型冷啟動中或請求逾時，請等 30 秒後再試一次。';
+      // 顯示實際錯誤文字以便診斷
+      const preview=txt.slice(0,300).replace(/</g,'&lt;');
+      typBub.innerHTML='⚠️ 非 JSON 回應 (HTTP '+r.status+'):<br><code style="font-size:11px;word-break:break-all">'+preview+'</code>';
       typBub.parentElement.classList.remove('typing');
       chatBusy=false;document.getElementById('send-btn').disabled=false;
       inp.focus();return;
