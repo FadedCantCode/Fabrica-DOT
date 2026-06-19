@@ -328,9 +328,50 @@ def save_state(state):
 
 
 # ============================================================
-# Chat 層:HF 呼叫已移到瀏覽器前端直接打(繞開 Python sandbox 限制)
-# Python 只負責：讀/寫 system prompt、儲存對話歷史
+# Chat 層:先試 Groq,失敗才 fallback HF
+# 用 urllib.request(跟 Redis 同一套),不用 asyncio
 # ============================================================
+
+def _call_api(url: str, token: str, payload: dict) -> str:
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+    if "choices" not in data:
+        raise ValueError(json.dumps(data)[:200])
+    return data["choices"][0]["message"]["content"]
+
+
+def sync_chat(messages: list, system: str) -> str:
+    if not GROQ_KEY and not HF_TOKEN:
+        return "⚠️ 請在 Vercel 環境變數設定 GROQ_API_KEY 或 HF_API_TOKEN。"
+    payload_base = {
+        "messages": [{"role": "system", "content": system}] + messages,
+        "max_tokens": 512,
+        "temperature": 0.7,
+    }
+    if GROQ_KEY:
+        try:
+            return _call_api(
+                "https://api.groq.com/openai/v1/chat/completions",
+                GROQ_KEY,
+                {**payload_base, "model": GROQ_MODEL},
+            )
+        except Exception as e:
+            return f"⚠️ Groq error: {e}"
+    try:
+        return _call_api(
+            "https://api-inference.huggingface.co/v1/chat/completions",
+            HF_TOKEN,
+            {**payload_base, "model": HF_MODEL_ID},
+        )
+    except Exception as e:
+        return f"⚠️ HF error: {e}"
+
 
 def get_system_prompt() -> str:
     result = redis_command("GET", SYS_KEY)
@@ -800,9 +841,7 @@ async function sendMsg(){
     const txt=await r.text();
     let d;
     try{d=JSON.parse(txt);}catch(e){
-      // 顯示實際錯誤文字以便診斷
-      const preview=txt.slice(0,300).replace(/</g,'&lt;');
-      typBub.innerHTML='⚠️ 非 JSON 回應 (HTTP '+r.status+'):<br><code style="font-size:11px;word-break:break-all">'+preview+'</code>';
+      typBub.textContent='⚠️ 伺服器回傳非 JSON (HTTP '+r.status+')，請查看 Vercel 函式日誌。';
       typBub.parentElement.classList.remove('typing');
       chatBusy=false;document.getElementById('send-btn').disabled=false;
       inp.focus();return;
@@ -905,19 +944,31 @@ async def reset_system_endpoint():
     return JSONResponse({"ok": True, "prompt": DEFAULT_SYSTEM})
 
 
-@app.post("/api/chat/store")
-async def chat_store_endpoint(request: Request):
-    """瀏覽器打完 HF 後呼叫這裡存對話歷史,不做任何 HF 呼叫。"""
+@app.post("/api/chat")
+async def chat_endpoint(request: Request):
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "invalid JSON"}, status_code=400)
-    turns = body.get("turns", [])
-    if turns:
+    messages = body.get("messages", [])
+    system   = body.get("system", "") or get_system_prompt()
+    if not messages:
+        return JSONResponse({"error": "no messages"}, status_code=400)
+    reply = sync_chat(messages, system)
+    # 儲存對話
+    last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), None)
+    turns = []
+    if last_user:
+        turns.append({"role": "user", "content": last_user})
+    turns.append({"role": "assistant", "content": reply})
+    try:
         append_turns(turns)
-    return JSONResponse({"ok": True, "stored": len(turns)})
+    except Exception:
+        pass
+    return JSONResponse({"reply": reply})
 
 
 @app.get("/api/chat/history")
 async def chat_history_endpoint():
-    return JSONResponse({"history": get_chat_history(), "model": HF_MODEL_ID})
+    return JSONResponse({"history": get_chat_history(), "model": GROQ_MODEL if GROQ_KEY else HF_MODEL_ID})
+
