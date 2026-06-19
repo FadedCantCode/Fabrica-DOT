@@ -14,6 +14,8 @@
 
 from fastapi import FastAPI, Request, Query
 from fastapi.responses import JSONResponse, HTMLResponse
+import ast as _ast
+import base64
 import json
 import math
 import os
@@ -294,6 +296,9 @@ HF_MODEL_ID = os.environ.get("HF_MODEL_ID", "Qwen/Qwen2.5-0.5B-Instruct")
 GROQ_KEY         = os.environ.get("GROQ_API_KEY")
 GROQ_MODEL        = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
 CHAT_WORKER_URL   = os.environ.get("CHAT_WORKER_URL", "")
+GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO       = os.environ.get("GITHUB_REPO", "")  # "username/repo"
+IMPROVE_SECRET    = os.environ.get("IMPROVE_SECRET", "")
 
 DEFAULT_SYSTEM = (
     "You are DOT, a concise and thoughtful AI assistant. "
@@ -618,6 +623,23 @@ header{
 .send-btn:disabled{opacity:.35;cursor:default}
 .chat-hint{font-family:var(--mono);font-size:11px;color:var(--ink-f);text-align:center;margin-top:7px}
 .chat-err{color:var(--rose);font-family:var(--mono);font-size:12px;margin-top:6px}
+.agent-bar{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-s);flex-shrink:0}
+.agent-toggle{display:flex;align-items:center;gap:7px;cursor:pointer;font-family:var(--mono);font-size:11px;color:var(--ink-s);user-select:none}
+.agent-toggle input{display:none}
+.agent-pill{width:32px;height:17px;border-radius:9px;background:var(--border);position:relative;transition:background .2s;flex-shrink:0}
+.agent-pill::after{content:'';position:absolute;width:13px;height:13px;border-radius:50%;background:var(--bg);top:2px;left:2px;transition:transform .2s}
+.agent-toggle input:checked~.agent-pill{background:var(--rust)}
+.agent-toggle input:checked~.agent-pill::after{transform:translateX(15px)}
+.agent-label{color:var(--ink-s)}
+.agent-on .agent-label{color:var(--rust)}
+.agent-steps{display:none;flex-direction:column;gap:6px;padding:10px 0;overflow-y:auto;max-height:180px;font-family:var(--mono);font-size:11px}
+.agent-steps.vis{display:flex}
+.astep{padding:6px 10px;border-radius:6px;background:var(--card);border-left:3px solid var(--border)}
+.astep.thought{border-color:var(--gold)}
+.astep.action{border-color:var(--rust)}
+.astep.obs{border-color:var(--sage);color:var(--ink-s)}
+.astep .ak{color:var(--ink-f);font-size:10px;margin-bottom:2px;text-transform:uppercase}
+.astep .av{color:var(--ink);word-break:break-word;white-space:pre-wrap}
 
 footer{
   padding:7px 16px;font-family:var(--mono);font-size:11px;color:var(--ink-f);
@@ -687,6 +709,16 @@ footer{
         <div class="chat-err" id="sys-err" style="display:none"></div>
       </div>
     </div>
+
+    <div class="agent-bar">
+      <label class="agent-toggle" id="agent-label">
+        <input type="checkbox" id="agent-mode" onchange="toggleAgentMode()">
+        <div class="agent-pill"></div>
+        <span class="agent-label">AGENT MODE</span>
+      </label>
+      <span style="font-family:var(--mono);font-size:10px;color:var(--ink-f)" id="agent-status">規劃 · 搜尋 · 子代理 · 自我迭代</span>
+    </div>
+    <div class="agent-steps" id="agent-steps"></div>
 
     <div class="msgs" id="msgs"></div>
 
@@ -780,8 +812,25 @@ function ncmd(raw){const p=raw.trim().split(/\s+/),c=p[0].toLowerCase();
   if(c==='run')doNRun(Math.max(1,Math.min(parseInt(p[1])||40,300)));
   else if(c==='status'){nrow('status','lc');doNStatus(false);}
   else if(c==='clear')$nlog.innerHTML='';
+  else if(c==='improve'){
+    nrow('improve — DOT 分析演化結果並自動 commit 程式改進','lc');
+    nrow('正在分析中，請稍候 (10-30s)…','ls');
+    fetch('/api/self-improve',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+      .then(r=>r.json()).then(d=>{
+        if(d.ok){
+          nrow('✓ DOT 提案已通過驗證並 commit','lo');
+          nrow('分析: '+d.analysis,'ls');
+          nrow('預期效果: '+d.expected_effect,'ls');
+          if(d.commit_url) nrow('commit: <a href="'+d.commit_url+'" target="_blank" style="color:var(--rust)">查看</a>','lo');
+          nrow('Vercel 正在自動 deploy，約 30 秒後生效','ls');
+        } else {
+          nrow('⚠️ '+( d.error||JSON.stringify(d)),'ler');
+          if(d.analysis) nrow('DOT 分析: '+d.analysis,'ls');
+        }
+      }).catch(e=>nrow('⚠️ fetch error: '+e,'ler'));
+  }
   else if(c==='help'){nplain('<span style="color:var(--rust)">run [N]</span> 演化N代');
-    nplain('<span style="color:var(--rust)">status</span> 讀狀態');nplain('<span style="color:var(--rust)">clear</span> 清空');}
+    nplain('<span style="color:var(--rust)">status</span> 讀狀態');nplain('<span style="color:var(--rust)">improve</span> DOT 自動分析並 commit 程式改進');nplain('<span style="color:var(--rust)">clear</span> 清空');}
   else nrow('unknown: '+c,'ler');}
 $ncmd.addEventListener('keydown',e=>{
   if(e.key==='Enter'){const v=$ncmd.value.trim();if(!v)return;nhist.unshift(v);nhIdx=-1;$ncmd.value='';ncmd(v);}
@@ -790,7 +839,39 @@ $ncmd.addEventListener('keydown',e=>{
 
 // ── Chat tab ──────────────────────────────────────────────
 const $msgs=document.getElementById('msgs');
-let chatHistory=[], chatBusy=false, currentSystem='', chatWorkerUrl='';
+let chatHistory=[], chatBusy=false, currentSystem='', chatWorkerUrl='', agentMode=false;
+
+function toggleAgentMode(){
+  agentMode=document.getElementById('agent-mode').checked;
+  const label=document.getElementById('agent-label');
+  const inp=document.getElementById('chat-in');
+  const status=document.getElementById('agent-status');
+  if(agentMode){
+    label.classList.add('agent-on');
+    inp.placeholder='輸入目標… (DOT 會自主規劃並執行)';
+    status.textContent='已啟動 · 搜尋/子代理/NEAT/自我迭代';
+    status.style.color='var(--rust)';
+  } else {
+    label.classList.remove('agent-on');
+    inp.placeholder='輸入訊息…（Enter 送出，Shift+Enter 換行）';
+    status.textContent='規劃 · 搜尋 · 子代理 · 自我迭代';
+    status.style.color='';
+  }
+}
+
+function renderAgentSteps(steps){
+  const $s=document.getElementById('agent-steps');
+  $s.innerHTML='';$s.classList.add('vis');
+  (steps||[]).forEach(function(s){
+    if(s.type==='step'){
+      if(s.thought){const d=document.createElement('div');d.className='astep thought';d.innerHTML='<div class="ak">思考</div><div class="av">'+s.thought.replace(/</g,'&lt;')+'</div>';$s.appendChild(d);}
+      if(s.action){const d=document.createElement('div');d.className='astep action';d.innerHTML='<div class="ak">工具: '+s.action+'</div><div class="av">'+String(s.input||'').slice(0,120).replace(/</g,'&lt;')+'</div>';$s.appendChild(d);}
+    } else if(s.type==='observation'){
+      const d=document.createElement('div');d.className='astep obs';d.innerHTML='<div class="ak">觀察 ('+s.tool+')</div><div class="av">'+String(s.result||'').slice(0,200).replace(/</g,'&lt;')+'</div>';$s.appendChild(d);
+    }
+  });
+  $s.scrollTop=$s.scrollHeight;
+}
 
 function toggleSys(){
   const t=document.getElementById('sys-toggle');
@@ -837,6 +918,37 @@ async function sendMsg(){
   const txt=inp.value.trim();if(!txt||chatBusy)return;
   inp.value='';autoResize();chatBusy=true;
   document.getElementById('send-btn').disabled=true;
+  document.getElementById('agent-steps').classList.remove('vis');
+  document.getElementById('agent-steps').innerHTML='';
+
+  // ── AGENT MODE ──────────────────────────────────────────
+  if(agentMode && chatWorkerUrl){
+    addMsg('user','🎯 '+txt);
+    const typBub=addMsg('bot','Agent 規劃中…',true);
+    try{
+      const r=await fetch(chatWorkerUrl.replace(/\/$/,'')+'/agent',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({goal:txt,context:currentSystem})
+      });
+      const d=await r.json();
+      if(d.steps&&d.steps.length) renderAgentSteps(d.steps);
+      const reply=d.final_answer||d.error||'Agent 完成但無輸出';
+      typBub.textContent=reply;typBub.parentElement.classList.remove('typing');
+      if(!reply.startsWith('⚠️')){
+        chatHistory.push({role:'user',content:txt});
+        chatHistory.push({role:'assistant',content:reply});
+        fetch('/api/chat/store',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({turns:[{role:'user',content:'[AGENT] '+txt},{role:'assistant',content:reply}]})
+        }).catch(()=>{});
+      }
+    }catch(e){
+      addMsg('bot','⚠️ Agent error: '+e).parentElement.classList.remove('typing');
+    }
+    chatBusy=false;document.getElementById('send-btn').disabled=false;inp.focus();
+    $msgs.scrollTop=$msgs.scrollHeight;return;
+  }
+
+  // ── CHAT MODE ────────────────────────────────────────────
   addMsg('user',txt);
   chatHistory.push({role:'user',content:txt});
   const typBub=addMsg('bot','thinking…',true);
@@ -845,20 +957,18 @@ async function sendMsg(){
     const r=await fetch(chatUrl,{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({messages:chatHistory.slice(-6),system:currentSystem})});
-    const txt=await r.text();
+    const raw=await r.text();
     let d;
-    try{d=JSON.parse(txt);}catch(e){
-      typBub.textContent='⚠️ 伺服器回傳非 JSON (HTTP '+r.status+')，請查看 Vercel 函式日誌。';
+    try{d=JSON.parse(raw);}catch(e){
+      typBub.textContent='⚠️ 伺服器回傳非 JSON (HTTP '+r.status+')';
       typBub.parentElement.classList.remove('typing');
-      chatBusy=false;document.getElementById('send-btn').disabled=false;
-      inp.focus();return;
+      chatBusy=false;document.getElementById('send-btn').disabled=false;inp.focus();return;
     }
     if(d.reply){
       typBub.textContent=d.reply;typBub.parentElement.classList.remove('typing');
       const ok=!d.reply.startsWith('⚠️')&&!d.reply.startsWith('⏳');
       if(ok){
         chatHistory.push({role:'assistant',content:d.reply});
-        // 儲存對話到 Redis(非阻塞)
         fetch('/api/chat/store',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({turns:[{role:'user',content:txt},{role:'assistant',content:d.reply}]})
         }).catch(()=>{});
@@ -977,3 +1087,185 @@ async def chat_store_endpoint(request: Request):
 async def chat_history_endpoint():
     return JSONResponse({"history": get_chat_history(), "model": GROQ_MODEL if GROQ_KEY else HF_MODEL_ID})
 
+
+# ============================================================
+# 自我改進:DOT 分析演化結果 → 寫程式 → commit GitHub
+# ============================================================
+
+def _gh_headers():
+    return {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "DOT-Self-Improve",
+        "Content-Type": "application/json",
+    }
+
+
+def github_get_file(path: str) -> dict:
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}",
+        headers=_gh_headers(), method="GET"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read())
+        content = base64.b64decode(data["content"]).decode("utf-8")
+        return {"content": content, "sha": data["sha"]}
+    except urllib.error.HTTPError as e:
+        return {"error": f"GitHub GET HTTP {e.code}: {e.read().decode()[:200]}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def github_commit_file(path: str, content: str, sha: str, message: str) -> dict:
+    payload = {
+        "message": message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        "sha": sha,
+        "branch": "main",
+    }
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}",
+        data=json.dumps(payload).encode(),
+        headers=_gh_headers(), method="PUT"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read())
+        return {"sha": data["commit"]["sha"], "url": data["content"]["html_url"]}
+    except urllib.error.HTTPError as e:
+        return {"error": f"GitHub PUT HTTP {e.code}: {e.read().decode()[:200]}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def extract_tasks_code(content: str) -> str:
+    lines = content.split("\n")
+    start = next((i for i, l in enumerate(lines) if l.startswith("TASKS = {")), None)
+    if start is None:
+        return ""
+    depth = 0
+    for i, line in enumerate(lines[start:], start):
+        depth += line.count("{") - line.count("}")
+        if i > start and depth <= 0:
+            return "\n".join(lines[start:i + 1])
+    return ""
+
+
+def call_worker_meta(state: dict, tasks_code: str, history_str: str) -> dict:
+    if not CHAT_WORKER_URL:
+        return {"error": "CHAT_WORKER_URL not set"}
+    payload = {"state": state, "tasks_code": tasks_code, "history": history_str}
+    req = urllib.request.Request(
+        CHAT_WORKER_URL.rstrip("/") + "/meta",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"}, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=40) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return {"error": f"Worker HTTP {e.code}: {e.read().decode()[:200]}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/self-improve")
+async def self_improve_endpoint(request: Request):
+    # 可選認證
+    if IMPROVE_SECRET:
+        if request.headers.get("x-improve-secret", "") != IMPROVE_SECRET:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return JSONResponse({"error": "GITHUB_TOKEN 或 GITHUB_REPO 未設定"})
+
+    # 1. 讀演化狀態
+    state = load_state()
+    if not state:
+        return JSONResponse({"error": "還沒有演化資料，先跑幾輪演化再試"})
+
+    context = {
+        "generation": state["generation"],
+        "current_task": TASK_ORDER[state["task_idx"] % len(TASK_ORDER)],
+        "history_tail": state.get("history", [])[-10:],
+    }
+
+    # 2. 從 GitHub 取現有程式碼
+    file_data = github_get_file("api/index.py")
+    if "error" in file_data:
+        return JSONResponse({"error": f"無法讀取 GitHub 檔案: {file_data['error']}"})
+
+    file_content = file_data["content"]
+    file_sha = file_data["sha"]
+    tasks_code = extract_tasks_code(file_content)
+    if not tasks_code:
+        return JSONResponse({"error": "找不到 TASKS 程式碼區塊"})
+
+    # 3. 呼叫 Cloudflare Worker 讓 DOT 分析並提案
+    meta_result = call_worker_meta(context, tasks_code, json.dumps(context["history_tail"], indent=2))
+    if "error" in meta_result:
+        return JSONResponse({"error": f"DOT meta 分析失敗: {meta_result['error']}"})
+
+    change = meta_result.get("change")
+    if not change:
+        return JSONResponse({"error": "DOT 沒有回傳有效的改進提案", "raw": meta_result})
+
+    old_code = change.get("old_code", "")
+    new_code = change.get("new_code", "")
+
+    if not old_code or old_code not in file_content:
+        return JSONResponse({
+            "error": "DOT 提案的 old_code 在檔案裡找不到（可能是 LLM 幻覺）",
+            "analysis": change.get("analysis"),
+            "old_code_preview": old_code[:120],
+        })
+
+    # 4. 套用修改並驗證語法
+    new_content = file_content.replace(old_code, new_code, 1)
+    try:
+        _ast.parse(new_content)
+    except SyntaxError as e:
+        return JSONResponse({
+            "error": f"語法驗證失敗，已放棄 commit: {e}",
+            "analysis": change.get("analysis"),
+        })
+
+    # 5. Commit 到 GitHub
+    commit_msg = f"[DOT self-improve] gen={state['generation']}: {change.get('expected_effect', 'task update')[:80]}"
+    commit_result = github_commit_file("api/index.py", new_content, file_sha, commit_msg)
+    if "error" in commit_result:
+        return JSONResponse({"error": f"Commit 失敗: {commit_result['error']}"})
+
+    # 6. 記錄到 Redis
+    record = {
+        "generation": state["generation"],
+        "analysis": change.get("analysis", ""),
+        "change_type": change.get("change_type", ""),
+        "expected_effect": change.get("expected_effect", ""),
+        "commit_url": commit_result.get("url", ""),
+    }
+    try:
+        old = redis_command("GET", "dot_improve_history")
+        hist = json.loads(old["result"]) if old and old.get("result") else []
+        hist.append(record)
+        redis_command("SET", "dot_improve_history", json.dumps(hist[-20:]))
+    except Exception:
+        pass
+
+    return JSONResponse({
+        "ok": True,
+        "analysis": change.get("analysis"),
+        "expected_effect": change.get("expected_effect"),
+        "commit_url": commit_result.get("url"),
+    })
+
+
+@app.get("/api/improve-history")
+async def improve_history_endpoint():
+    try:
+        result = redis_command("GET", "dot_improve_history")
+        hist = json.loads(result["result"]) if result and result.get("result") else []
+    except Exception:
+        hist = []
+    return JSONResponse({"history": hist})
