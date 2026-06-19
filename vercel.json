@@ -2,7 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "builds": [
     { "src": "api/index.py", "use": "@vercel/python" },
-    { "src": "api/chat.js",  "use": "@vercel/node"   }
+    {
+      "src": "api/chat.js",
+      "use": "@vercel/node",
+      "config": { "runtime": "nodejs18.x", "maxDuration": 60 }
+    }
   ],
   "routes": [
     { "src": "/api/chat", "dest": "api/chat.js" },
