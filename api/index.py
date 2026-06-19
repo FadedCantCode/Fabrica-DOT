@@ -298,6 +298,7 @@ DEFAULT_SYSTEM = (
     "Keep replies short and direct unless asked to elaborate."
 )
 
+import httpx
 import urllib.request
 
 
@@ -329,7 +330,7 @@ def save_state(state):
 # Chat 層:HF Inference API + Redis 儲存
 # ============================================================
 
-def hf_chat(messages: list, system_prompt: str) -> str:
+async def hf_chat(messages: list, system_prompt: str) -> str:
     if not HF_TOKEN:
         return "⚠️ HF_API_TOKEN 尚未設定。請在 Vercel 環境變數加入 HF_API_TOKEN。"
     payload = {
@@ -337,17 +338,17 @@ def hf_chat(messages: list, system_prompt: str) -> str:
         "messages": [{"role": "system", "content": system_prompt}] + messages,
         "max_tokens": 512,
         "temperature": 0.7,
-        "stream": False,
     }
-    req = urllib.request.Request(
-        "https://api-inference.huggingface.co/v1/chat/completions",
-        data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read())
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                "https://api-inference.huggingface.co/v1/chat/completions",
+                json=payload,
+                headers={"Authorization": f"Bearer {HF_TOKEN}"},
+            )
+            data = resp.json()
+        if "choices" not in data:
+            return f"⚠️ HF API 回傳格式異常: {data}"
         return data["choices"][0]["message"]["content"]
     except Exception as e:
         return f"⚠️ HF API error: {e}"
@@ -891,7 +892,7 @@ async def chat_endpoint(request: Request):
     if not messages:
         return JSONResponse({"error": "no messages"}, status_code=400)
     last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), None)
-    reply = hf_chat(messages, system)
+    reply = await hf_chat(messages, system)
     if last_user:
         append_turn("user", last_user)
     append_turn("assistant", reply)
