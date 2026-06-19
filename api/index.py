@@ -291,8 +291,9 @@ SYS_KEY   = "dot_system_prompt"
 
 HF_TOKEN    = os.environ.get("HF_API_TOKEN")
 HF_MODEL_ID = os.environ.get("HF_MODEL_ID", "Qwen/Qwen2.5-0.5B-Instruct")
-GROQ_KEY    = os.environ.get("GROQ_API_KEY")
-GROQ_MODEL  = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_KEY         = os.environ.get("GROQ_API_KEY")
+GROQ_MODEL        = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+CHAT_WORKER_URL   = os.environ.get("CHAT_WORKER_URL", "")
 
 DEFAULT_SYSTEM = (
     "You are DOT, a concise and thoughtful AI assistant. "
@@ -789,7 +790,7 @@ $ncmd.addEventListener('keydown',e=>{
 
 // ── Chat tab ──────────────────────────────────────────────
 const $msgs=document.getElementById('msgs');
-let chatHistory=[], chatBusy=false, currentSystem='';
+let chatHistory=[], chatBusy=false, currentSystem='', chatWorkerUrl='';
 
 function toggleSys(){
   const t=document.getElementById('sys-toggle');
@@ -799,7 +800,7 @@ function toggleSys(){
 }
 async function loadSystem(){
   try{const r=await fetch('/api/system');const d=await r.json();
-    currentSystem=d.prompt;
+    currentSystem=d.prompt;chatWorkerUrl=d.chat_worker_url||'';
     document.getElementById('sys-input').value=d.prompt;
     document.getElementById('sys-model').textContent=d.model||'';
     document.getElementById('model-hint').textContent=d.model||'—';
@@ -840,7 +841,8 @@ async function sendMsg(){
   chatHistory.push({role:'user',content:txt});
   const typBub=addMsg('bot','thinking…',true);
   try{
-    const r=await fetch('/api/chat',{method:'POST',
+    const chatUrl=chatWorkerUrl||'/api/chat';
+    const r=await fetch(chatUrl,{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({messages:chatHistory.slice(-20),system:currentSystem})});
     const txt=await r.text();
@@ -932,7 +934,8 @@ async def get_system_endpoint():
         "model": active_model,
         "provider": provider,
         "hf_token": HF_TOKEN or "",
-        "hf_ready": bool(HF_TOKEN) or using_groq,
+        "hf_ready": bool(HF_TOKEN) or using_groq or bool(CHAT_WORKER_URL),
+        "chat_worker_url": CHAT_WORKER_URL,
     })
 
 
