@@ -844,7 +844,7 @@ async function sendMsg(){
     const chatUrl=chatWorkerUrl||'/api/chat';
     const r=await fetch(chatUrl,{method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:chatHistory.slice(-20),system:currentSystem})});
+      body:JSON.stringify({messages:chatHistory.slice(-6),system:currentSystem})});
     const txt=await r.text();
     let d;
     try{d=JSON.parse(txt);}catch(e){
