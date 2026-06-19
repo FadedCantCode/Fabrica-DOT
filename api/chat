@@ -1,19 +1,13 @@
-// api/chat.js — Node.js 18+ serverless function
-// 使用 Groq API:免費、無冷啟動、< 1 秒回應、OpenAI 相容格式
-// 如果沒有 GROQ_API_KEY 才 fallback 到 HF(有冷啟動問題)
+// api/chat.js — Node.js 18+
 'use strict';
-
-module.exports.config = { maxDuration: 60 };
 
 var REDIS_URL   = process.env.UPSTASH_REDIS_REST_URL  || process.env.KV_REST_API_URL;
 var REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
 var GROQ_KEY    = process.env.GROQ_API_KEY;
 var HF_TOKEN    = process.env.HF_API_TOKEN;
 var HF_MODEL    = process.env.HF_MODEL_ID || 'Qwen/Qwen2.5-0.5B-Instruct';
+var GROQ_MODEL  = process.env.GROQ_MODEL  || 'llama-3.1-8b-instant';
 var DEFAULT_SYS = 'You are DOT, a concise and helpful AI assistant.';
-
-// Groq 免費模型(任選一個)
-var GROQ_MODEL  = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 
 async function redisCmd() {
   var args = Array.prototype.slice.call(arguments);
@@ -26,47 +20,19 @@ async function redisCmd() {
   return r.json();
 }
 
-async function callGroq(messages, system) {
-  var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      messages: [{ role: 'system', content: system }].concat(messages),
-      max_tokens: 512,
-      temperature: 0.7
-    })
-  });
-  var data = await r.json();
-  if (!data.choices) throw new Error(JSON.stringify(data).slice(0, 200));
-  return data.choices[0].message.content;
-}
-
-async function callHF(messages, system) {
-  var r = await fetch('https://api-inference.huggingface.co/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': 'Bearer ' + HF_TOKEN,
-      'Content-Type': 'application/json',
-      'x-wait-for-model': 'true'
-    },
-    body: JSON.stringify({
-      model: HF_MODEL,
-      messages: [{ role: 'system', content: system }].concat(messages),
-      max_tokens: 512,
-      temperature: 0.7
-    })
-  });
-  if (r.status === 503) {
-    var e = await r.json().catch(function() { return {}; });
-    throw new Error('model_loading:' + (e.estimated_time || 30));
+async function handler(req, res) {
+  // GET: 診斷端點 — 在瀏覽器打 /api/chat 確認環境變數有沒有被讀到
+  if (req.method === 'GET') {
+    return res.json({
+      has_groq_key: !!GROQ_KEY,
+      has_hf_token: !!HF_TOKEN,
+      active_provider: GROQ_KEY ? 'groq' : (HF_TOKEN ? 'hf' : 'none'),
+      groq_model: GROQ_MODEL,
+      hf_model: HF_MODEL,
+      node_version: process.version
+    });
   }
-  var data = await r.json();
-  if (!data.choices) throw new Error(JSON.stringify(data).slice(0, 200));
-  return data.choices[0].message.content;
-}
 
-module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' });
 
   var body = req.body || {};
@@ -84,26 +50,47 @@ module.exports = async function handler(req, res) {
   }
 
   if (!GROQ_KEY && !HF_TOKEN) {
-    return res.json({ reply: '⚠️ 請在 Vercel 環境變數設定 GROQ_API_KEY(推薦)或 HF_API_TOKEN。' });
+    return res.json({ reply: '⚠️ 請設定 GROQ_API_KEY(推薦)或 HF_API_TOKEN 環境變數後 redeploy。' });
   }
 
   var reply;
   try {
     if (GROQ_KEY) {
-      reply = await callGroq(messages, system);
+      var gr = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: [{ role: 'system', content: system }].concat(messages),
+          max_tokens: 512, temperature: 0.7
+        })
+      });
+      var gd = await gr.json();
+      if (!gd.choices) throw new Error('[Groq] ' + JSON.stringify(gd).slice(0, 200));
+      reply = gd.choices[0].message.content;
+
     } else {
-      reply = await callHF(messages, system);
+      var hr = await fetch('https://api-inference.huggingface.co/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + HF_TOKEN,
+          'Content-Type': 'application/json',
+          'x-wait-for-model': 'true'
+        },
+        body: JSON.stringify({
+          model: HF_MODEL,
+          messages: [{ role: 'system', content: system }].concat(messages),
+          max_tokens: 512, temperature: 0.7
+        })
+      });
+      var hd = await hr.json();
+      if (!hd.choices) throw new Error('[HF] ' + JSON.stringify(hd).slice(0, 200));
+      reply = hd.choices[0].message.content;
     }
   } catch(e) {
-    var msg = String(e);
-    if (msg.startsWith('Error: model_loading:')) {
-      var eta = msg.split(':')[2] || '30';
-      return res.json({ reply: '⏳ HF 模型冷啟動中，預計 ' + Math.ceil(eta) + ' 秒。建議改用 Groq(免費無冷啟動)。' });
-    }
-    return res.json({ reply: '⚠️ ' + msg });
+    return res.json({ reply: '⚠️ ' + String(e) });
   }
 
-  // 儲存對話
   try {
     var lastUser = null;
     for (var i = messages.length - 1; i >= 0; i--) {
@@ -114,7 +101,10 @@ module.exports = async function handler(req, res) {
     if (lastUser) history.push({ role: 'user', content: lastUser });
     history.push({ role: 'assistant', content: reply });
     await redisCmd('SET', 'dot_chat_history', JSON.stringify(history.slice(-200)));
-  } catch(e) { /* non-fatal */ }
+  } catch(e) {}
 
   return res.json({ reply: reply });
-};
+}
+
+module.exports = handler;
+module.exports.config = { maxDuration: 60 };
