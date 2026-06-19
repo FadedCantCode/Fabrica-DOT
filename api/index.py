@@ -120,7 +120,7 @@ def genome_distance(g1, g2):
 # ============================================================
 
 def mutate(genome, sigma, rng, max_hidden=20):
-
+    g = clone_genome(genome)
     genes = g["genes"]
 
     add_prob = genes["add_prob"]
@@ -145,9 +145,8 @@ def mutate(genome, sigma, rng, max_hidden=20):
         genes["add_prob"] = max(0.01,min(0.50, genes["add_prob"]))
         genes["prune_prob"] = max(0.0,min(0.20, genes["prune_prob"]))
         genes["sigma_scale"] = max(0.2,min(3.0, genes["sigma_scale"]))
-    return g
-    
-    # 權重擾動
+
+    # return g權重擾動
     for unit in g["hidden"]:
         for i in range(len(unit["w"])):
             if rng.random() < 0.7:
