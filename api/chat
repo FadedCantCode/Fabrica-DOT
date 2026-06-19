@@ -1,110 +1,63 @@
-// api/chat.js — Node.js 18+
-'use strict';
+// api/chat.js — Vercel Edge Function
+// Edge runtime 跑在 Cloudflare 網路上,可以呼叫 Groq(也在 Cloudflare)
+// 不像 Python/Node.js serverless 跑在 AWS Lambda,不會被 Cloudflare WAF 1010 擋
+export const config = { runtime: 'edge' };
 
-var REDIS_URL   = process.env.UPSTASH_REDIS_REST_URL  || process.env.KV_REST_API_URL;
-var REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
-var GROQ_KEY    = process.env.GROQ_API_KEY;
-var HF_TOKEN    = process.env.HF_API_TOKEN;
-var HF_MODEL    = process.env.HF_MODEL_ID || 'Qwen/Qwen2.5-0.5B-Instruct';
-var GROQ_MODEL  = process.env.GROQ_MODEL  || 'llama-3.1-8b-instant';
-var DEFAULT_SYS = 'You are DOT, a concise and helpful AI assistant.';
+const DEFAULT_SYS = 'You are DOT, a concise and helpful AI assistant.';
 
-async function redisCmd() {
-  var args = Array.prototype.slice.call(arguments);
-  if (!REDIS_URL || !REDIS_TOKEN) return null;
-  var r = await fetch(REDIS_URL, {
-    method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + REDIS_TOKEN, 'Content-Type': 'application/json' },
-    body: JSON.stringify(args)
-  });
-  return r.json();
-}
-
-async function handler(req, res) {
-  // GET: 診斷端點 — 在瀏覽器打 /api/chat 確認環境變數有沒有被讀到
-  if (req.method === 'GET') {
-    return res.json({
-      has_groq_key: !!GROQ_KEY,
-      has_hf_token: !!HF_TOKEN,
-      active_provider: GROQ_KEY ? 'groq' : (HF_TOKEN ? 'hf' : 'none'),
-      groq_model: GROQ_MODEL,
-      hf_model: HF_MODEL,
-      node_version: process.version
+export default async function handler(request) {
+  if (request.method === 'GET') {
+    return Response.json({
+      runtime: 'edge',
+      has_groq: !!process.env.GROQ_API_KEY,
+      model: process.env.GROQ_MODEL || 'llama-3.1-8b-instant'
     });
   }
 
-  if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' });
-
-  var body = req.body || {};
-  if (typeof body === 'string') { try { body = JSON.parse(body); } catch(e) { body = {}; } }
-  if (Buffer.isBuffer(body)) { try { body = JSON.parse(body.toString()); } catch(e) { body = {}; } }
-
-  var messages = body.messages || [];
-  var system   = body.system   || '';
-
-  if (!system) {
-    try {
-      var d = await redisCmd('GET', 'dot_system_prompt');
-      system = (d && d.result) ? d.result : DEFAULT_SYS;
-    } catch(e) { system = DEFAULT_SYS; }
+  if (request.method !== 'POST') {
+    return new Response('method not allowed', { status: 405 });
   }
 
-  if (!GROQ_KEY && !HF_TOKEN) {
-    return res.json({ reply: '⚠️ 請設定 GROQ_API_KEY(推薦)或 HF_API_TOKEN 環境變數後 redeploy。' });
+  const GROQ_KEY   = process.env.GROQ_API_KEY;
+  const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
+
+  if (!GROQ_KEY) {
+    return Response.json({ reply: '⚠️ GROQ_API_KEY 未設定，請在 Vercel 環境變數加入。' });
   }
 
-  var reply;
+  let body;
+  try { body = await request.json(); }
+  catch(e) { return Response.json({ error: 'invalid JSON' }, { status: 400 }); }
+
+  const messages = body.messages || [];
+  const system   = body.system   || DEFAULT_SYS;
+
   try {
-    if (GROQ_KEY) {
-      var gr = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: GROQ_MODEL,
-          messages: [{ role: 'system', content: system }].concat(messages),
-          max_tokens: 512, temperature: 0.7
-        })
-      });
-      var gd = await gr.json();
-      if (!gd.choices) throw new Error('[Groq] ' + JSON.stringify(gd).slice(0, 200));
-      reply = gd.choices[0].message.content;
+    const gr = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GROQ_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages: [{ role: 'system', content: system }, ...messages],
+        max_tokens: 512,
+        temperature: 0.7
+      })
+    });
 
-    } else {
-      var hr = await fetch('https://api-inference.huggingface.co/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer ' + HF_TOKEN,
-          'Content-Type': 'application/json',
-          'x-wait-for-model': 'true'
-        },
-        body: JSON.stringify({
-          model: HF_MODEL,
-          messages: [{ role: 'system', content: system }].concat(messages),
-          max_tokens: 512, temperature: 0.7
-        })
-      });
-      var hd = await hr.json();
-      if (!hd.choices) throw new Error('[HF] ' + JSON.stringify(hd).slice(0, 200));
-      reply = hd.choices[0].message.content;
+    const text = await gr.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch(e) { return Response.json({ reply: `⚠️ Groq 回傳非 JSON (${gr.status}): ${text.slice(0,200)}` }); }
+
+    if (!data.choices) {
+      return Response.json({ reply: `⚠️ Groq: ${JSON.stringify(data).slice(0,200)}` });
     }
+    return Response.json({ reply: data.choices[0].message.content });
+
   } catch(e) {
-    return res.json({ reply: '⚠️ ' + String(e) });
+    return Response.json({ reply: `⚠️ fetch error: ${e.message}` });
   }
-
-  try {
-    var lastUser = null;
-    for (var i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'user') { lastUser = messages[i].content; break; }
-    }
-    var h = await redisCmd('GET', 'dot_chat_history');
-    var history = (h && h.result) ? JSON.parse(h.result) : [];
-    if (lastUser) history.push({ role: 'user', content: lastUser });
-    history.push({ role: 'assistant', content: reply });
-    await redisCmd('SET', 'dot_chat_history', JSON.stringify(history.slice(-200)));
-  } catch(e) {}
-
-  return res.json({ reply: reply });
 }
-
-module.exports = handler;
-module.exports.config = { maxDuration: 60 };
