@@ -298,7 +298,8 @@ DEFAULT_SYSTEM = (
     "Keep replies short and direct unless asked to elaborate."
 )
 
-import httpx
+import asyncio
+import requests as _requests
 import urllib.request
 
 
@@ -328,9 +329,12 @@ def save_state(state):
 
 # ============================================================
 # Chat 層:HF Inference API + Redis 儲存
+# run_in_executor 把同步 requests 放進 thread pool,
+# 完全繞開 async event loop 的 socket 資源競爭(EBUSY 根本原因)
 # ============================================================
 
-async def hf_chat(messages: list, system_prompt: str) -> str:
+def _hf_chat_sync(messages: list, system_prompt: str) -> str:
+    """純同步 HF 呼叫,由 run_in_executor 在 thread pool 跑。"""
     if not HF_TOKEN:
         return "⚠️ HF_API_TOKEN 尚未設定。請在 Vercel 環境變數加入 HF_API_TOKEN。"
     payload = {
@@ -340,18 +344,23 @@ async def hf_chat(messages: list, system_prompt: str) -> str:
         "temperature": 0.7,
     }
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                "https://api-inference.huggingface.co/v1/chat/completions",
-                json=payload,
-                headers={"Authorization": f"Bearer {HF_TOKEN}"},
-            )
-            data = resp.json()
+        resp = _requests.post(
+            "https://api-inference.huggingface.co/v1/chat/completions",
+            json=payload,
+            headers={"Authorization": f"Bearer {HF_TOKEN}"},
+            timeout=60,
+        )
+        data = resp.json()
         if "choices" not in data:
             return f"⚠️ HF API 回傳格式異常: {data}"
         return data["choices"][0]["message"]["content"]
     except Exception as e:
         return f"⚠️ HF API error: {e}"
+
+
+async def hf_chat(messages: list, system_prompt: str) -> str:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _hf_chat_sync, messages, system_prompt)
 
 
 def get_system_prompt() -> str:
