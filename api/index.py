@@ -43,12 +43,6 @@ def new_genome(rng, n_hidden=1):
     return {
         "hidden": [new_hidden_unit(rng) for _ in range(n_hidden)],
         "out_bias": rng.uniform(-0.5, 0.5),
-
-        "genes": {
-            "add_prob": rng.uniform(0.05, 0.30),
-            "prune_prob": rng.uniform(0.01, 0.10),
-            "sigma_scale": rng.uniform(0.5, 2.0),
-        }
     }
 
 
@@ -67,26 +61,8 @@ def genome_size(genome):
 
 def clone_genome(genome):
     return {
-        "hidden": [
-            {
-                "w": list(u["w"]),
-                "out": u["out"]
-            }
-            for u in genome["hidden"]
-        ],
-
+        "hidden": [{"w": list(u["w"]), "out": u["out"]} for u in genome["hidden"]],
         "out_bias": genome["out_bias"],
-
-        "genes": dict(
-            genome.get(
-                "genes",
-                {
-                    "add_prob": 0.18,
-                    "prune_prob": 0.04,
-                    "sigma_scale": 1.0
-                }
-            )
-        )
     }
 
 
@@ -119,14 +95,8 @@ def genome_distance(g1, g2):
 # 突變:結構(長/刪神經元)+ 權重擾動
 # ============================================================
 
-def mutate(genome, sigma, rng, max_hidden=20):
+def mutate(genome, sigma, rng, add_prob=0.18, prune_prob=0.04, max_hidden=20):
     g = clone_genome(genome)
-    genes = g["genes"]
-
-    add_prob = genes["add_prob"]
-    prune_prob = genes["prune_prob"]
-
-    sigma *= genes["sigma_scale"]
 
     # 長出新神經元
     if rng.random() < add_prob and len(g["hidden"]) < max_hidden:
@@ -136,17 +106,8 @@ def mutate(genome, sigma, rng, max_hidden=20):
     if rng.random() < prune_prob and len(g["hidden"]) > 3:
         idx = min(range(len(g["hidden"])), key=lambda i: abs(g["hidden"][i]["out"]))
         g["hidden"].pop(idx)
-    if rng.random() < 0.2:
-        genes["add_prob"] += rng.gauss(0, 0.02)
-    if rng.random() < 0.2:
-        genes["prune_prob"] += rng.gauss(0, 0.01)
-    if rng.random() < 0.2:
-        genes["sigma_scale"] += rng.gauss(0, 0.10)
-        genes["add_prob"] = max(0.01,min(0.50, genes["add_prob"]))
-        genes["prune_prob"] = max(0.0,min(0.20, genes["prune_prob"]))
-        genes["sigma_scale"] = max(0.2,min(3.0, genes["sigma_scale"]))
 
-    # return g權重擾動
+    # 權重擾動
     for unit in g["hidden"]:
         for i in range(len(unit["w"])):
             if rng.random() < 0.7:
@@ -169,30 +130,9 @@ def crossover(g1, g2, rng):
             src = u_long
         child_hidden.append({"w": list(src["w"]), "out": src["out"]})
     return {
-    "hidden": child_hidden,
-
-    "out_bias":
-        g1["out_bias"]
-        if rng.random() < 0.5
-        else g2["out_bias"],
-
-    "genes": {
-        "add_prob":
-            g1["genes"]["add_prob"]
-            if rng.random() < 0.5
-            else g2["genes"]["add_prob"],
-
-        "prune_prob":
-            g1["genes"]["prune_prob"]
-            if rng.random() < 0.5
-            else g2["genes"]["prune_prob"],
-
-        "sigma_scale":
-            g1["genes"]["sigma_scale"]
-            if rng.random() < 0.5
-            else g2["genes"]["sigma_scale"],
+        "hidden": child_hidden,
+        "out_bias": g1["out_bias"] if rng.random() < 0.5 else g2["out_bias"],
     }
-}
 
 
 # ============================================================
@@ -284,20 +224,10 @@ class NEATPopulation:
 
     def step(self, data, elitism=2):
         for ind in self.individuals:
-
-    mse = mse_loss(
-        ind.genome,
-        data
-    )
-
-    complexity_penalty = (
-        genome_size(ind.genome)
-        * 0.003
-    )
-
-    ind.fitness = (
-        1.0 / (1.0 + mse)
-    ) - complexity_penalty
+            ind.fitness = 1.0 / (1.0 + mse_loss(ind.genome, data))
+        order = sorted(range(len(self.individuals)), key=lambda i: self.individuals[i].fitness, reverse=True)
+        self.best = self.individuals[order[0]]
+        best_fit = self.best.fitness
 
         if self._last_best is not None and best_fit <= self._last_best + 1e-6:
             self.gens_since_improvement += 1
