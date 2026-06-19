@@ -855,7 +855,7 @@ async function sendMsg(){
     }
     if(d.reply){
       typBub.textContent=d.reply;typBub.parentElement.classList.remove('typing');
-      const ok=!d.reply.startsWith('⚠️');
+      const ok=!d.reply.startsWith('⚠️')&&!d.reply.startsWith('⏳');
       if(ok){
         chatHistory.push({role:'assistant',content:d.reply});
         // 儲存對話到 Redis(非阻塞)
