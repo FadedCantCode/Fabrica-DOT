@@ -741,7 +741,7 @@ $ncmd.addEventListener('keydown',e=>{
 
 // ── Chat tab ──────────────────────────────────────────────
 const $msgs=document.getElementById('msgs');
-let chatHistory=[], chatBusy=false, currentSystem='', hfToken='', hfModel='';
+let chatHistory=[], chatBusy=false, currentSystem='';
 
 function toggleSys(){
   const t=document.getElementById('sys-toggle');
@@ -751,7 +751,7 @@ function toggleSys(){
 }
 async function loadSystem(){
   try{const r=await fetch('/api/system');const d=await r.json();
-    currentSystem=d.prompt;hfToken=d.hf_token||'';hfModel=d.model||'Qwen/Qwen2.5-0.5B-Instruct';
+    currentSystem=d.prompt;
     document.getElementById('sys-input').value=d.prompt;
     document.getElementById('sys-model').textContent=d.model||'';
     document.getElementById('model-hint').textContent=d.model||'—';
@@ -791,34 +791,17 @@ async function sendMsg(){
   addMsg('user',txt);
   chatHistory.push({role:'user',content:txt});
   const typBub=addMsg('bot','thinking…',true);
-  if(!hfToken){
-    typBub.textContent='⚠️ HF_API_TOKEN 未設定，請在 Vercel 環境變數加入後 redeploy。';
-    typBub.parentElement.classList.remove('typing');
-    chatBusy=false;document.getElementById('send-btn').disabled=false;return;
-  }
   try{
-    // 直接從瀏覽器打 HF API，繞開 Python sandbox 的 EBUSY 限制
-    const hfResp=await fetch('https://api-inference.huggingface.co/v1/chat/completions',{
-      method:'POST',
-      headers:{'Authorization':'Bearer '+hfToken,'Content-Type':'application/json'},
-      body:JSON.stringify({
-        model:hfModel,
-        messages:[{role:'system',content:currentSystem},...chatHistory.slice(-20)],
-        max_tokens:512,temperature:0.7
-      })
-    });
-    const hfData=await hfResp.json();
-    if(!hfData.choices){
-      typBub.textContent='⚠️ HF API: '+JSON.stringify(hfData).slice(0,120);
-      typBub.parentElement.classList.remove('typing');
+    const r=await fetch('/api/chat',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({messages:chatHistory.slice(-20),system:currentSystem})});
+    const d=await r.json();
+    if(d.reply){
+      typBub.textContent=d.reply;typBub.parentElement.classList.remove('typing');
+      chatHistory.push({role:'assistant',content:d.reply});
     } else {
-      const reply=hfData.choices[0].message.content;
-      typBub.textContent=reply;typBub.parentElement.classList.remove('typing');
-      chatHistory.push({role:'assistant',content:reply});
-      // 儲存對話到 Redis（非阻塞）
-      fetch('/api/chat/store',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({turns:[{role:'user',content:txt},{role:'assistant',content:reply}]})
-      }).catch(()=>{});
+      typBub.textContent='⚠️ '+(d.error||JSON.stringify(d));
+      typBub.parentElement.classList.remove('typing');
     }
   }catch(e){typBub.textContent='⚠️ fetch error: '+e;typBub.parentElement.classList.remove('typing');}
   chatBusy=false;document.getElementById('send-btn').disabled=false;
