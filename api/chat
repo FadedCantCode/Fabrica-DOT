@@ -1,18 +1,20 @@
-// api/chat.js — Vercel Node.js function
-// HF API call 從 Python sandbox 移到這裡,因為 Node.js fetch 沒有 EBUSY 問題
+// api/chat.js — Vercel Node.js 18+ function
+// Node.js 18 has global fetch — no imports needed
+'use strict';
 
-const REDIS_URL   = process.env.UPSTASH_REDIS_REST_URL  || process.env.KV_REST_API_URL;
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
-const HF_TOKEN    = process.env.HF_API_TOKEN;
-const MODEL_ID    = process.env.HF_MODEL_ID || 'Qwen/Qwen2.5-0.5B-Instruct';
-const DEFAULT_SYS = 'You are DOT, a concise and thoughtful AI assistant. Keep replies short and direct unless asked to elaborate.';
+var REDIS_URL   = process.env.UPSTASH_REDIS_REST_URL  || process.env.KV_REST_API_URL;
+var REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+var HF_TOKEN    = process.env.HF_API_TOKEN;
+var MODEL_ID    = process.env.HF_MODEL_ID || 'Qwen/Qwen2.5-0.5B-Instruct';
+var DEFAULT_SYS = 'You are DOT, a concise and helpful AI assistant.';
 
-async function redisCmd(...args) {
+async function redisCmd() {
+  var args = Array.prototype.slice.call(arguments);
   if (!REDIS_URL || !REDIS_TOKEN) return null;
-  const r = await fetch(REDIS_URL, {
+  var r = await fetch(REDIS_URL, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(args),
+    headers: { 'Authorization': 'Bearer ' + REDIS_TOKEN, 'Content-Type': 'application/json' },
+    body: JSON.stringify(args)
   });
   return r.json();
 }
@@ -20,51 +22,53 @@ async function redisCmd(...args) {
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' });
 
-  const body    = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-  const messages = body?.messages ?? [];
-  let system     = body?.system ?? '';
+  var body = req.body || {};
+  if (typeof body === 'string') { try { body = JSON.parse(body); } catch(e) { body = {}; } }
 
-  // system prompt 從 Redis 讀(如果前端沒傳)
+  var messages = body.messages || [];
+  var system   = body.system   || '';
+
+  // system prompt from Redis if not provided
   if (!system) {
     try {
-      const d = await redisCmd('GET', 'dot_system_prompt');
-      system = d?.result || DEFAULT_SYS;
-    } catch { system = DEFAULT_SYS; }
+      var d = await redisCmd('GET', 'dot_system_prompt');
+      system = (d && d.result) ? d.result : DEFAULT_SYS;
+    } catch(e) { system = DEFAULT_SYS; }
   }
 
-  if (!HF_TOKEN) {
-    return res.status(200).json({ reply: '⚠️ HF_API_TOKEN 尚未設定。請在 Vercel 環境變數加入 HF_API_TOKEN。' });
-  }
+  if (!HF_TOKEN) return res.json({ reply: '⚠️ HF_API_TOKEN not set in Vercel env vars.' });
 
-  // HF Inference API
-  let reply;
+  var reply;
   try {
-    const hfRes = await fetch('https://api-inference.huggingface.co/v1/chat/completions', {
+    var hfRes = await fetch('https://api-inference.huggingface.co/v1/chat/completions', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${HF_TOKEN}`, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': 'Bearer ' + HF_TOKEN, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: MODEL_ID,
-        messages: [{ role: 'system', content: system }, ...messages],
+        messages: [{ role: 'system', content: system }].concat(messages),
         max_tokens: 512,
-        temperature: 0.7,
-      }),
+        temperature: 0.7
+      })
     });
-    const data = await hfRes.json();
-    if (!data.choices) return res.status(200).json({ reply: `⚠️ HF API 回傳格式異常: ${JSON.stringify(data)}` });
+    var data = await hfRes.json();
+    if (!data.choices) return res.json({ reply: '⚠️ HF: ' + JSON.stringify(data).slice(0, 200) });
     reply = data.choices[0].message.content;
-  } catch (e) {
-    return res.status(200).json({ reply: `⚠️ HF API error: ${e.message}` });
+  } catch(e) {
+    return res.json({ reply: '⚠️ HF error: ' + String(e) });
   }
 
-  // 儲存對話歷史到 Redis(非同步,失敗不影響回應)
+  // store conversation (non-fatal)
   try {
-    const lastUser = [...messages].reverse().find(m => m.role === 'user');
-    const h = await redisCmd('GET', 'dot_chat_history');
-    const history = h?.result ? JSON.parse(h.result) : [];
-    if (lastUser) history.push({ role: 'user', content: lastUser.content });
+    var lastUser = null;
+    for (var i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') { lastUser = messages[i].content; break; }
+    }
+    var h = await redisCmd('GET', 'dot_chat_history');
+    var history = (h && h.result) ? JSON.parse(h.result) : [];
+    if (lastUser) history.push({ role: 'user', content: lastUser });
     history.push({ role: 'assistant', content: reply });
     await redisCmd('SET', 'dot_chat_history', JSON.stringify(history.slice(-200)));
-  } catch { /* non-fatal */ }
+  } catch(e) { /* non-fatal */ }
 
-  return res.status(200).json({ reply });
+  return res.json({ reply: reply });
 };
