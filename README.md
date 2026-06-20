@@ -10,21 +10,21 @@ serverless infrastructure. (Vercel + Cloudflare Workers + Upstash Redis)
 └───────────────┬───────────────────────────────┬─────────────────┘
                 │                                │
                 ▼                                ▼
-   ┌─────────────────────────┐      ┌──────────────────────────────┐
-   │  Vercel (Python/FastAPI)│      │  Cloudflare Worker (ES Modules)│
-   │  api/index.py           │      │  worker.js                     │
-   │                         │      │                                 │
-   │  • NEAT evolution engine│◄─────┤  • Chat                        │
+   ┌─────────────────────────┐       ┌───────────────────────────────┐
+   │  Vercel (Python/FastAPI)│       │ Cloudflare Worker (ES Modules)│
+   │  api/index.py           │       │  worker.js                    │
+   │                         │       │                               │
+   │  • NEAT evolution engine│◄──────┤  • Chat                       │
    │  • Terminal UI (HTML/JS)│ self- │  • Autonomous agent (ReAct)   │
    │  • State storage        │improve│  • Self-improve analysis      │
    │  • GitHub commit API    │──────►│  • Multi-provider LLM router  │
-   └───────────┬─────────────┘      └──────────────┬─────────────────┘
+   └───────────┬─────────────┘       └──────────────┬────────────────┘
                │                                    │
                ▼                                    ▼
-      ┌─────────────────┐                ┌────────────────────────┐
-      │ Upstash Redis    │                │ Groq (primary)          │
-      │ (NEAT state,     │                │ Cloudflare Workers AI   │
-      │  chat history)   │                │ (automatic fallback)    │
+      ┌──────────────────┐                ┌────────────────────────┐
+      │ Upstash Redis    │                │ Groq (primary)         │
+      │ (NEAT state,     │                │ Cloudflare Workers AI  │
+      │  chat history)   │                │ (automatic fallback)   │
       └──────────────────┘                └────────────────────────┘
 ```
 
