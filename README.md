@@ -1,8 +1,7 @@
 # DOT — Fabrica
 
 A self-evolving NEAT neural network and autonomous AI agent, running entirely on free-tier
-serverless infrastructure (Vercel + Cloudflare Workers + Upstash Redis), built and operated
-end-to-end from a phone.
+serverless infrastructure. (Vercel + Cloudflare Workers + Upstash Redis)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
