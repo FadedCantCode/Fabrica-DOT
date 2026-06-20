@@ -726,6 +726,10 @@ async function sendAgent(goal){
         if(s.action)addMsg('action','⚡','ACTION   '+s.action+(s.input?' → '+String(s.input).slice(0,80):''));
       }else if(s.type==='observation'){
         addMsg('obs','◉','OBS['+s.tool+']  '+String(s.result||'').slice(0,200));
+      }else if(s.type==='error'){
+        addMsg('err','✗','ERROR  '+String(s.content||'').slice(0,200));
+      }else if(s.type==='loop_break'){
+        addMsg('sys','▸',s.content||'迴圈中斷');
       }
     });
     if(d.memory&&d.memory.length){agentMemory=d.memory;saveMemory();}
@@ -800,13 +804,37 @@ $inp.addEventListener('keydown',function(e){
     e.preventDefault();var text=$inp.value.trim();if(!text||busy)return;
     $inp.value='';$inp.style.height='auto';hideCmdPal();histIdx=-1;inputHist.unshift(text);
     if(text.startsWith('/')){runCmd(text.split(' ')[0],text.split(' ').slice(1).join(' '));return}
-    if(text.startsWith('$')){var g=text.slice(1).trim();if(g){busy=true;addMsg('user','→',g);sendAgent(g).finally(function(){busy=false});}return}
     if(text.startsWith('@')){openMemory();return}
+
+    // 偵測 $ 分隔的多個目標,依序執行而不是合併成一個亂掉的目標
+    if(text.indexOf('$')!==-1){
+      var goals=text.split(/\$+/).map(function(s){return s.trim()}).filter(Boolean);
+      if(goals.length>1){
+        busy=true;runGoalQueue(goals).finally(function(){busy=false});return;
+      }
+      var single=goals[0]||text.replace(/^\$+/,'').trim();
+      if(single){busy=true;addMsg('user','→',single);sendAgent(single).finally(function(){busy=false});}
+      return;
+    }
+
     busy=true;
     if(mode==='agent'){addMsg('user','→',text);sendAgent(text).finally(function(){busy=false});}
     else{addMsg('user','›',text);sendChat(text).finally(function(){busy=false});}
   }
 });
+
+async function runGoalQueue(goals){
+  sys('偵測到 '+goals.length+' 個目標，將依序執行（每個間隔 3 秒避免額度超限）');
+  for(var i=0;i<goals.length;i++){
+    addMsg('user','→','['+(i+1)+'/'+goals.length+'] '+goals[i]);
+    await sendAgent(goals[i]);
+    if(i<goals.length-1){
+      sys('等待 3 秒…');
+      await new Promise(function(r){setTimeout(r,3000)});
+    }
+  }
+  sys('全部 '+goals.length+' 個目標已完成');
+}
 </script>
 </body>
 </html>"""
