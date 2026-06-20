@@ -949,7 +949,6 @@ async def get_system_endpoint():
         "prompt": get_system_prompt(),
         "model": active_model,
         "provider": provider,
-        "hf_token": HF_TOKEN or "",
         "hf_ready": bool(HF_TOKEN) or using_groq or bool(CHAT_WORKER_URL),
         "chat_worker_url": CHAT_WORKER_URL,
     })
