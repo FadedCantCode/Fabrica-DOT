@@ -4,8 +4,7 @@
     { "src": "api/index.py", "use": "@vercel/python" }
   ],
   "routes": [
-    { "src": "/api/chat", "dest": "api/chat.js" },
-    { "src": "/(.*)",     "dest": "api/index.py" }
+    { "src": "/(.*)", "dest": "api/index.py" }
   ],
   "crons": [
     { "path": "/api/evolve", "schedule": "0 3 * * *" }
