@@ -273,7 +273,7 @@ def evolve(pop, data, generations, refine_every=10):
 
 _XS = [-math.pi + i * (2 * math.pi / 39) for i in range(40)]
 TASKS = {
-    "e": [(x, math.sin(2 * x) + 0.5 * math.cos(3 * x) + 0.2 * x) for x in _XS],
+    "a": [(x, math.sin(x) * math.cos(x / 2)) for x in _XS],
     "b": [(x, math.cos(2 * x) + 0.2 * x) for x in _XS],
     "c": [(x, math.sin(3 * x) * 0.5 + math.sin(x)) for x in _XS],
     "d": [(x, abs(x) / math.pi - 0.5) for x in _XS],
@@ -793,6 +793,8 @@ async function sendAgent(goal){
         addMsg('err','ERR',String(s.content||'').slice(0,200));
       }else if(s.type==='loop_break'){
         sys(s.content||'迴圈中斷');
+      }else if(s.type==='format_retry'){
+        sys('格式不符，要求重新輸出 → '+String(s.content||'').slice(0,100));
       }
     });
     if(d.memory&&d.memory.length){agentMemory=d.memory;saveMemory();}
