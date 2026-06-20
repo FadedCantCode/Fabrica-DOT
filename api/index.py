@@ -274,7 +274,7 @@ def evolve(pop, data, generations, refine_every=10):
 _XS = [-math.pi + i * (2 * math.pi / 39) for i in range(40)]
 TASKS = {
     "a": [(x, math.sin(4 * x) + math.cos(5 * x) + 0.3 * x) for x in _XS],
-    "b": [(x, math.cos(2 * x) + 0.2 * x) for x in _XS],
+    "b": [(x, math.sin(2 * x) * math.cos(3 * x) + 0.1 * x) for x in _XS],
     "c": [(x, math.sin(3 * x) * 0.5 + math.sin(x)) for x in _XS],
     "d": [(x, abs(x) / math.pi - 0.5) for x in _XS],
 }
