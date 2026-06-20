@@ -291,10 +291,7 @@ STATE_KEY = "dot_neat_state"
 CHAT_KEY  = "dot_chat_history"
 SYS_KEY   = "dot_system_prompt"
 
-HF_TOKEN    = os.environ.get("HF_API_TOKEN")
-HF_MODEL_ID = os.environ.get("HF_MODEL_ID", "Qwen/Qwen2.5-0.5B-Instruct")
-GROQ_KEY         = os.environ.get("GROQ_API_KEY")
-GROQ_MODEL        = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_MODEL        = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")  # 僅作為 Worker 查不到時的顯示用預設值
 CHAT_WORKER_URL   = os.environ.get("CHAT_WORKER_URL", "")
 GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPO       = os.environ.get("GITHUB_REPO", "")  # "username/repo"
@@ -331,57 +328,6 @@ def load_state():
 
 def save_state(state):
     redis_command("SET", STATE_KEY, json.dumps(state))
-
-
-# ============================================================
-# Chat 層:先試 Groq,失敗才 fallback HF
-# 用 urllib.request(跟 Redis 同一套),不用 asyncio
-# ============================================================
-
-def _call_api(url: str, token: str, payload: dict) -> str:
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")[:300]
-        raise ValueError(f"HTTP {e.code}: {body}")
-    if "choices" not in data:
-        raise ValueError(json.dumps(data)[:200])
-    return data["choices"][0]["message"]["content"]
-
-
-def sync_chat(messages: list, system: str) -> str:
-    if not GROQ_KEY and not HF_TOKEN:
-        return "⚠️ 請在 Vercel 環境變數設定 GROQ_API_KEY 或 HF_API_TOKEN。"
-    payload_base = {
-        "messages": [{"role": "system", "content": system}] + messages,
-        "max_tokens": 512,
-        "temperature": 0.7,
-    }
-    if GROQ_KEY:
-        key_hint = GROQ_KEY[:8] + "..." if len(GROQ_KEY) > 8 else "?"
-        try:
-            return _call_api(
-                "https://api.groq.com/openai/v1/chat/completions",
-                GROQ_KEY,
-                {**payload_base, "model": GROQ_MODEL},
-            )
-        except Exception as e:
-            return f"⚠️ Groq error (key={key_hint}): {e}"
-    try:
-        return _call_api(
-            "https://api-inference.huggingface.co/v1/chat/completions",
-            HF_TOKEN,
-            {**payload_base, "model": HF_MODEL_ID},
-        )
-    except Exception as e:
-        return f"⚠️ HF error: {e}"
 
 
 def get_system_prompt() -> str:
@@ -940,16 +886,33 @@ async def evolve_endpoint(request: Request, generations: int = Query(default=GEN
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+def get_worker_info() -> dict:
+    """跟 Worker 要真正在用的 model 名稱,而不是在 Python 這邊用獨立、可能對不上的環境變數猜測。
+    Worker 不可達時優雅降級成靜態預設值,不會讓整個 /api/system 端點掛掉。"""
+    if not CHAT_WORKER_URL:
+        return {}
+    try:
+        req = urllib.request.Request(CHAT_WORKER_URL.rstrip("/"), method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        return {}
+
+
 @app.get("/api/system")
 async def get_system_endpoint():
-    using_groq = bool(GROQ_KEY)
-    active_model = GROQ_MODEL if using_groq else HF_MODEL_ID
-    provider = "Groq" if using_groq else "HuggingFace"
+    worker_info = get_worker_info()
+    model = worker_info.get("chat_model") or GROQ_MODEL
+    if worker_info.get("groq_key"):
+        provider = "Groq"
+    elif worker_info.get("workers_ai"):
+        provider = "Cloudflare Workers AI"
+    else:
+        provider = "unknown"
     return JSONResponse({
         "prompt": get_system_prompt(),
-        "model": active_model,
+        "model": model,
         "provider": provider,
-        "hf_ready": bool(HF_TOKEN) or using_groq or bool(CHAT_WORKER_URL),
         "chat_worker_url": CHAT_WORKER_URL,
     })
 
@@ -990,7 +953,7 @@ async def chat_store_endpoint(request: Request):
 
 @app.get("/api/chat/history")
 async def chat_history_endpoint():
-    return JSONResponse({"history": get_chat_history(), "model": GROQ_MODEL if GROQ_KEY else HF_MODEL_ID})
+    return JSONResponse({"history": get_chat_history(), "model": GROQ_MODEL})
 
 
 # ============================================================
@@ -1180,4 +1143,3 @@ async def improve_history_endpoint():
     except Exception:
         hist = []
     return JSONResponse({"history": hist})
-
