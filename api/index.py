@@ -767,6 +767,7 @@ async function sendChat(text){
       body:JSON.stringify({messages:chatHistory.slice(-12),system:sysPrompt+memCtx})});
     var d=await r.json();var reply=d.reply||d.error||'no response';
     bub.innerHTML=reply.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>');
+    if(d.provider)sys('via '+d.provider);
     chatHistory.push({role:'assistant',content:reply});
     fetch('/api/chat/store',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({turns:[{role:'user',content:text},{role:'assistant',content:reply}]})}).catch(function(){});
@@ -798,6 +799,7 @@ async function sendAgent(goal){
       }
     });
     if(d.memory&&d.memory.length){agentMemory=d.memory;saveMemory();}
+    if(d.provider){sys('via '+d.provider)}
     if(d.final_answer){
       addMsg('final','DOT',d.final_answer);
       chatHistory.push({role:'user',content:'[AGENT] '+goal});
