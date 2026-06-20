@@ -1,83 +1,188 @@
-# DOT evolving-neuron
+# DOT — Fabrica
 
-把 evolving_neuron.py 的自我演化神經元,改成可以掛在 Vercel 上、靠排程器自己跑的版本。
+A self-evolving NEAT neural network and autonomous AI agent, running entirely on free-tier
+serverless infrastructure (Vercel + Cloudflare Workers + Upstash Redis), built and operated
+end-to-end from a phone.
 
-## 先說清楚 Vercel 實際上是怎麼運作的
-
-Vercel 沒有「一直在背景跑的程式」這種東西。`/api/evolve` 是一個 serverless
-function,每次被呼叫才會啟動、跑完就結束,呼叫之間完全不會記得任何東西。
-「自己持續進化」的感覺,是靠排程器(cron 或外部服務)定期去呼叫這個
-endpoint 做出來的;每次呼叫的流程是:
-
-1. 從 Upstash Redis 讀回上次存的族群狀態
-2. 跑一批世代(預設 50 代,可用 `?generations=100` 調整,上限 500)
-3. 把新狀態存回 Redis
-4. 回傳目前進度的 JSON
-
-所以「狀態存在哪裡」比「程式在哪裡跑」更重要——這也是下面唯一一個我沒辦法
-幫你自動做完的步驟。
-
-## 部署步驟
-
-我這邊的執行環境沒有網路存取權限,沒辦法直接幫你跑 `vercel deploy`,
-下面這幾行你在自己的終端機跑就好:
-
-```bash
-npm install -g vercel        # 如果還沒裝過
-cd evolving-neuron-vercel
-vercel link                  # 會問你要建立新專案還是連到既有專案
-vercel deploy --prod
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Browser (single terminal UI)                                   │
+│  /agent /chat /evolve /status /improve /memory /clear /help     │
+└───────────────┬───────────────────────────────┬─────────────────┘
+                │                                │
+                ▼                                ▼
+   ┌─────────────────────────┐      ┌──────────────────────────────┐
+   │  Vercel (Python/FastAPI)│      │  Cloudflare Worker (ES Modules)│
+   │  api/index.py           │      │  worker.js                     │
+   │                         │      │                                 │
+   │  • NEAT evolution engine│◄─────┤  • Chat                        │
+   │  • Terminal UI (HTML/JS)│ self- │  • Autonomous agent (ReAct)   │
+   │  • State storage        │improve│  • Self-improve analysis      │
+   │  • GitHub commit API    │──────►│  • Multi-provider LLM router  │
+   └───────────┬─────────────┘      └──────────────┬─────────────────┘
+               │                                    │
+               ▼                                    ▼
+      ┌─────────────────┐                ┌────────────────────────┐
+      │ Upstash Redis    │                │ Groq (primary)          │
+      │ (NEAT state,     │                │ Cloudflare Workers AI   │
+      │  chat history)   │                │ (automatic fallback)    │
+      └──────────────────┘                └────────────────────────┘
 ```
 
-部署完會拿到一個 `https://你的專案.vercel.app` 網址,直接瀏覽器打開
-`https://你的專案.vercel.app/api/evolve` 應該會看到類似這樣的 JSON
-(這時候 `redis_connected` 會是 `false`,因為還沒接 Redis,正常):
+## What this actually is
 
-```json
-{"redis_connected": false, "total_generations": 50, "current_task": "a", ...}
+Two systems sharing one terminal interface:
+
+1. **NEAT neuroevolution** — a population of small neural networks evolves over generations
+   to approximate math functions (`sin`, `cos`, etc.), with a complexity penalty that
+   rewards compact solutions over large ones. State persists in Redis across calls, since
+   Vercel functions have no memory between invocations.
+2. **DOT, an autonomous agent** — a ReAct-style loop (THOUGHT → ACTION → OBSERVATION) with
+   tool use, sub-agent spawning, persistent memory, and the ability to trigger NEAT
+   evolution or propose changes to its own evolution tasks via GitHub commits.
+
+Both are exposed through one command-driven terminal — there's no separate "NEAT tab";
+evolution is just another thing the agent (or you, via slash commands) can do.
+
+## Stack
+
+| Layer | Tech |
+|---|---|
+| Frontend | Single-page terminal, vanilla JS, served as a string from FastAPI |
+| Backend | Vercel serverless (Python/FastAPI) |
+| Agent + chat runtime | Cloudflare Worker (ES Modules) |
+| State | Upstash Redis (NEAT population state, chat history) |
+| Primary LLM | Groq (`llama-3.3-70b-versatile`) |
+| Fallback LLM | Cloudflare Workers AI (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`), native binding, no external fetch |
+| Web search | Tavily API |
+| Self-improvement | GitHub REST API (commits directly to this repo) |
+
+Everything is built and deployed from a phone — GitHub's web editor, the Vercel dashboard,
+and the Cloudflare dashboard. No local dev environment, no CLI tools.
+
+## Why two LLM providers
+
+Groq's free tier has a per-minute token cap that gets hit fast under real usage (chat,
+agent steps, and self-improve all share the same quota). Cloudflare Workers AI runs
+natively inside the same Worker via an `AI` binding — not an external HTTP call — so it
+has no exposure to the Cloudflare-WAF-blocks-AWS-Lambda problem that affects calls from
+Vercel's Python runtime to most external APIs. `callLLM()` tries Groq first (faster),
+falls back to Workers AI on failure, and every response reports which provider actually
+handled it.
+
+**Known limitation, not hidden:** the Workers AI fallback model is noticeably weaker than
+Groq at following the strict multi-step THOUGHT/ACTION/INPUT format the agent loop
+requires. Simple chat degrades fine on fallback; complex multi-tool agent tasks sometimes
+don't. The agent detects when it's running on fallback and gives an honest "can't reliably
+do this right now" answer instead of producing a confused half-result.
+
+## Autonomous agent
+
+Tools available to the agent:
+
+| Tool | Does |
+|---|---|
+| `web_search` | Tavily search |
+| `fetch_url` | Fetch and strip a webpage to plain text |
+| `spawn_agent` | Run a specialized sub-agent with its own role/task |
+| `neat_status` | Read current NEAT fitness/neuron stats + recent history, no side effects |
+| `run_neat` | Run N *additional* evolution generations |
+| `write_code` | Propose a change to the NEAT `TASKS` dict and commit it (narrow scope — not a general code generator) |
+| `remember` | Save a fact to persistent memory, round-tripped across turns |
+
+Loop has a hard cap of 6 steps, a loop-breaker for repeated non-progress, a code-level
+guard against calling the same read-only tool twice with identical input, and requires
+analytical answers to cite the actual numbers observed rather than generic conclusions.
+
+Conversation history (last 8 turns) and persistent memory are both injected into every
+agent call, so follow-ups like "tell me more" resolve correctly instead of starting from
+a blank slate.
+
+## Self-improvement loop
+
+`/improve` → Vercel reads current NEAT state from Redis → fetches `api/index.py` from
+GitHub → extracts the `TASKS` code block → sends it to the Worker's `/meta` endpoint →
+the model proposes one JSON-formatted, `ast`-validated code change → committed back to
+this repo via the GitHub API → Vercel auto-redeploys. History of every proposal (applied
+or not) is kept in Redis, readable via `GET /api/improve-history`.
+
+## Terminal commands
+
+```
+/agent          switch to autonomous agent mode
+/chat           switch to conversational mode
+/evolve [N]     run N NEAT generations (default 100)
+/status         show current NEAT fitness/neuron stats + history
+/improve        trigger the self-improvement loop
+/memory         open the agent memory panel
+/clear          clear the terminal
+/help           list commands
 ```
 
-## 接上持久化儲存(唯一需要在 Vercel 網頁上手動點的步驟)
+`tab` also toggles agent/chat mode. Prefixing a message with `$` forces agent mode for
+that one message. Multiple `$`-separated goals in one message are automatically split
+into a sequential queue (with a delay between each) instead of being merged into one
+garbled goal.
 
-1. 進你的 Vercel 專案 → **Storage** 頁籤 → **Marketplace** → 找 **Upstash**
-   → 選 **Redis** → 建立一個免費的資料庫並連結到這個專案
-2. Vercel 會自動把連線資訊寫成環境變數(`UPSTASH_REDIS_REST_URL` /
-   `UPSTASH_REDIS_REST_TOKEN`,舊版叫 `KV_REST_API_URL` /
-   `KV_REST_API_TOKEN`,程式碼兩種命名都認)
-3. 重新部署一次讓新的環境變數生效:`vercel deploy --prod`
-4. 再打一次 `/api/evolve`,這次 `redis_connected` 應該是 `true`,
-   而且連續打幾次會看到 `total_generations` 持續累加,代表狀態真的接上了
+## Environment variables
 
-## 排程頻率怎麼選
+**Vercel:**
 
-`vercel.json` 裡預設用 Vercel 內建 cron,每天跑一次(UTC 03:00),這是
-Hobby(免費)方案能設定的上限——Hobby 的 cron 一天只能觸發一次,排得更密
-deploy 會直接失敗。三個選項:
+| Var | Purpose |
+|---|---|
+| `UPSTASH_REDIS_REST_URL` / `KV_REST_API_URL` | Redis connection (either naming works) |
+| `UPSTASH_REDIS_REST_TOKEN` / `KV_REST_API_TOKEN` | Redis auth |
+| `CHAT_WORKER_URL` | URL of the Cloudflare Worker, used by the frontend |
+| `GITHUB_TOKEN` | Classic PAT, `repo` scope only, for the self-improve commit loop |
+| `GITHUB_REPO` | `username/repo` |
+| `IMPROVE_SECRET` | Optional, guards the self-improve endpoint |
+| `CRON_SECRET` | Optional, guards the scheduled evolve cron |
 
-- **維持每天一次**:什麼都不用改,但因為一天才跑一批,可以把
-  `GENERATIONS_PER_RUN_DEFAULT`(在 `api/evolve.py` 裡)調高一點,
-  讓單次累積的進化量大一些。
-- **升級 Pro($20/月)**:`vercel.json` 的 `schedule` 可以改成
-  `"*/10 * * * *"` 之類更密的頻率,不受每天一次限制。
-- **不升級,改用外部排程器**:`/api/evolve` 本身就是一個普通的 HTTPS
-  endpoint,任何排程服務(例如免費的 cron-job.org)都可以用任意頻率去
-  打它,跟 Vercel 自己的 cron 限制完全無關。這個情況下可以直接把
-  `vercel.json` 裡的 `crons` 整段拿掉,只留外部排程器設定。
+**Cloudflare Worker:**
 
-## 安全性(可選但建議)
+| Var | Purpose |
+|---|---|
+| `GROQ_API_KEY` | Primary LLM provider |
+| `GROQ_MODEL_NAME` | Chat model (default `llama-3.3-70b-versatile`) |
+| `AGENT_MODEL_NAME` | Agent reasoning model (default `llama-3.3-70b-versatile`) |
+| `WORKERS_AI_MODEL` | Fallback model (default `@cf/meta/llama-3.3-70b-instruct-fp8-fast`) |
+| `TAVILY_API_KEY` | Web search |
+| `DOT_VERCEL_URL` | URL of the Vercel deployment, so the Worker can call back into it |
+| `AI` binding | Cloudflare Workers AI — must be added via Settings → Bindings, named exactly `AI` |
 
-如果不想讓網路上隨便一個知道網址的人也能觸發演化(會浪費 function 用量、
-也可能跟你自己的排程同時寫入造成 race condition),在 Vercel 專案的
-環境變數加一個 `CRON_SECRET`(隨機字串即可)。Vercel 自己的 cron 呼叫會
-自動帶上對應的 Authorization header;如果用外部排程器,要手動在它的設定
-裡加上 `Authorization: Bearer <你的CRON_SECRET>` 這個 header。
+## Known cruft / not yet cleaned up
 
-## 我本地測試過的部分,沒測過的部分
+- `vercel.json` still routes `/api/chat` to `api/chat.js`, a file that no longer exists
+  in the repo (an earlier Node.js chat endpoint, abandoned after repeated 404s — chat now
+  goes browser → Worker directly). Dead route, harmless but should be removed.
+- `api/index.py` retains an old direct Groq/HuggingFace call path (`GROQ_KEY`, `HF_TOKEN`,
+  `HF_MODEL_ID`) from before chat moved to the Worker. Likely unreachable in the current
+  flow; not yet removed.
+- `train.py` (Colab LoRA fine-tuning on Qwen2.5-0.5B, pushed to HF Hub) was built early
+  on for a "train a small model on our own conversation data" direction. Untouched since,
+  unused while Groq/Workers AI remain primary.
 
-用假的 Redis(本機檔案模擬)測過完整的「讀狀態 → 跑一批 → 存狀態」流程,
-包括跨多次獨立 process 呼叫狀態有沒有正確累積、任務切換時機對不對、
-continual learning 保護有沒有在切換後正確啟動——這些都驗證沒問題。
+## Honest current limitations
 
-沒測過、也測不了的部分:真正打 Upstash 的 HTTPS REST API(我的執行環境
-沒有網路),以及 Vercel 自己的 cron 實際觸發時機。這兩塊照官方文件寫的,
-邏輯上應該沒問題,但要等你真的部署接上 Redis 之後才能 100% 確認。
+- NEAT evolves on four hand-picked `sin`/`cos`/`abs` tasks. They're simple enough that the
+  population plateaus quickly (4-neuron solutions reaching ~0.998 fitness and staying
+  there for hundreds of generations) — not because the search is broken, but because the
+  task doesn't demand more structure. A genuine time-series prediction task (vector window
+  → next value) would force real topology growth; not yet implemented.
+- Free-tier rate limits are real and shared across chat, agent, and self-improve calls.
+  Heavy testing sessions will hit them; the multi-provider fallback softens this but
+  doesn't eliminate it.
+- `write_code` only ever proposes changes to the NEAT `TASKS` dictionary. It is not, and
+  is not intended to be, a general-purpose coding tool.
+
+## Local setup
+
+There isn't one — this project has never been run outside Vercel + Cloudflare's
+dashboards. To fork it: deploy `api/index.py` to Vercel, deploy `worker.js` to a
+Cloudflare Worker, connect an Upstash Redis database via the Vercel Storage marketplace,
+add the environment variables above, and add the Workers AI binding from the Cloudflare
+dashboard.
+
+## License
+
+MIT.
