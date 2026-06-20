@@ -275,7 +275,7 @@ _XS = [-math.pi + i * (2 * math.pi / 39) for i in range(40)]
 TASKS = {
     "a": [(x, math.sin(7 * x) * math.cos(4 * x) + 0.3 * x**2 + 0.2 * abs(x) + 0.1 * x**4 + 0.05 * x**6) for x in _XS],
     "b": [(x, math.sin(2 * x) * math.cos(3 * x) + 0.1 * x) for x in _XS],
-    "c": [(x, math.sin(3 * x) * 0.5 + math.sin(x)) for x in _XS],
+    "c": [(x, math.sin(5 * x) * math.cos(2 * x) + 0.2 * x**3 + 0.1 * abs(x)) for x in _XS],
     "d": [(x, math.sin(2 * x) + 0.5 * math.cos(4 * x) + 0.2 * x) for x in _XS],
 }
 TASK_ORDER = ["a", "b", "c", "d"]
