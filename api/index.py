@@ -976,7 +976,13 @@ def call_worker_meta(state: dict, tasks_code: str, history_str: str) -> dict:
     req = urllib.request.Request(
         CHAT_WORKER_URL.rstrip("/") + "/meta",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"}, method="POST"
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+        },
+        method="POST"
     )
     try:
         with urllib.request.urlopen(req, timeout=40) as resp:
