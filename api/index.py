@@ -505,7 +505,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--mono);font-size:13p
 /* ── COMMAND PALETTE ── */
 .cmdpal{position:absolute;bottom:100%;left:0;right:0;background:var(--bg1);
   border:1.5px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;z-index:100;display:none;
-  max-height:210px;overflow-y:auto;overflow:hidden}
+  max-height:350px;overflow-y:auto;overflow:hidden}
 .cmdpal.vis{display:block}
 .cpi{display:flex;gap:14px;align-items:center;padding:8px 14px;cursor:pointer;transition:background .12s}
 .cpi:hover,.cpi.sel{background:var(--bg2)}
