@@ -717,7 +717,7 @@ async function sendAgent(goal){
   try{
     var r=await fetch(workerUrl.replace(/\/$/,'')+'/agent',{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({goal:goal,context:sysPrompt,memory:agentMemory})});
+      body:JSON.stringify({goal:goal,context:sysPrompt,memory:agentMemory,history:chatHistory.slice(-8)})});
     var d=await r.json();
     document.getElementById('input-border').classList.remove('busy');
     if(d.steps)d.steps.forEach(function(s){
