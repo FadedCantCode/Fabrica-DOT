@@ -274,7 +274,7 @@ def evolve(pop, data, generations, refine_every=10):
 _XS = [-math.pi + i * (2 * math.pi / 39) for i in range(40)]
 TASKS = {
     "a": [(x, math.sin(11 * x) * math.cos(5 * x) + 0.4 * x**3 + 0.3 * abs(x) + 0.2 * x**5) for x in _XS],
-    "b": [(x, math.sin(13 * x) * math.cos(7 * x) + 0.3 * x**5 + 0.2 * abs(x**2) + 0.1 * x**6) for x in _XS],
+    "b": [(x, math.sin(7 * x) * math.cos(4 * x) + 0.2 * x**3 + 0.1 * abs(x) + 0.05 * x**4) for x in _XS],
     "c": [(x, math.sin(9 * x) * math.cos(3 * x) + 0.3 * x**4 + 0.2 * abs(x**2)) for x in _XS],
     "d": [(x, math.sin(3 * x) * math.cos(2 * x) + 0.3 * x**2 + 0.2 * abs(x)) for x in _XS],
 }
@@ -290,6 +290,7 @@ REDIS_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN") or os.environ.get("KV_R
 STATE_KEY = "dot_neat_state"
 CHAT_KEY  = "dot_chat_history"
 SYS_KEY   = "dot_system_prompt"
+MEMORY_KEY = "dot_agent_memory"
 
 GROQ_MODEL        = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")  # 僅作為 Worker 查不到時的顯示用預設值
 CHAT_WORKER_URL   = os.environ.get("CHAT_WORKER_URL", "")
@@ -352,6 +353,18 @@ def append_turns(turns: list):
     history = get_chat_history()
     history.extend(turns)
     redis_command("SET", CHAT_KEY, json.dumps(history[-200:]))
+
+
+def get_agent_memory() -> list:
+    result = redis_command("GET", MEMORY_KEY)
+    if result and result.get("result"):
+        return json.loads(result["result"])
+    return []
+
+
+def save_agent_memory(memory: list):
+    # 跟 Worker 的 remember 工具裡的上限一致(50 筆),避免無限長
+    redis_command("SET", MEMORY_KEY, json.dumps(memory[-50:]))
 
 
 def pop_to_dict(pop):
@@ -757,7 +770,11 @@ async function sendAgent(goal){
 }
 
 function updateMemCount(){var el=document.getElementById('sb-mem');if(el)el.textContent=agentMemory.length+' memor'+(agentMemory.length===1?'y':'ies')}
-function saveMemory(){try{sessionStorage.setItem('dot_memory',JSON.stringify(agentMemory))}catch(e){}updateMemCount()}
+function saveMemory(){
+  try{sessionStorage.setItem('dot_memory',JSON.stringify(agentMemory))}catch(e){}
+  updateMemCount();
+  fetch('/api/memory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({memory:agentMemory})}).catch(function(){});
+}
 function openMemory(){document.getElementById('mem-panel').classList.add('vis');renderMemList()}
 function closeMemory(){document.getElementById('mem-panel').classList.remove('vis')}
 function renderMemList(){
@@ -786,6 +803,13 @@ function updateStatus(d){
 
 (async function boot(){
   sys('DOT v4.0 · Fabrica OS · type /help');
+  try{var rm=await fetch('/api/memory');var dm=await rm.json();
+    if(Array.isArray(dm.memory)){
+      agentMemory=dm.memory;
+      try{sessionStorage.setItem('dot_memory',JSON.stringify(agentMemory))}catch(e){}
+      updateMemCount();
+    }
+  }catch(e){}
   try{var r=await fetch('/api/system');var d=await r.json();
     sysPrompt=d.prompt||'';workerUrl=d.chat_worker_url||'';model=d.model||'—';
     document.getElementById('ml-model').textContent=model;
@@ -954,6 +978,24 @@ async def chat_store_endpoint(request: Request):
 @app.get("/api/chat/history")
 async def chat_history_endpoint():
     return JSONResponse({"history": get_chat_history(), "model": GROQ_MODEL})
+
+
+@app.get("/api/memory")
+async def get_memory_endpoint():
+    return JSONResponse({"memory": get_agent_memory()})
+
+
+@app.post("/api/memory")
+async def set_memory_endpoint(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    memory = body.get("memory")
+    if not isinstance(memory, list):
+        return JSONResponse({"error": "memory must be a list"}, status_code=400)
+    save_agent_memory(memory)
+    return JSONResponse({"ok": True})
 
 
 # ============================================================
