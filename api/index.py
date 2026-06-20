@@ -500,84 +500,140 @@ _HTML = r"""<!doctype html>
 <link href="https://fonts.googleapis.com/css2?family=Fragment+Mono&family=Press+Start+2P&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#080808;--bg1:#0d0d0d;--bg2:#111;--border:#1a1a1a;--border2:#222;
-  --orange:#D97757;--orange2:#F5A07A;--ink:#d8dde2;--ink2:#888;--ink3:#444;--ink4:#222;
-  --green:#5a8a5a;--gold:#8a7a40;
-  --mono:'Fragment Mono',monospace;--pixel:'Press Start 2P',monospace;}
+:root{
+  /* ── Fictional Typeface 設計語言移植:flat 色塊 / 零陰影 / pill 形狀 / 暴力字級跳躍 / 彈性動效 ── */
+  --bg:#0A0908;--bg1:#0F0D0A;--bg2:#171310;
+  --line:#2A241C;--line-soft:#1C1812;
+  --rust:#FF6B3D;--rust-deep:#D9501F;
+  --gold:#FFC93C;--sage:#5EE291;--rose:#FF5C7A;
+  --ink:#F5F0E8;--ink-soft:#B8AFA0;--ink-mute:#5C5347;--ink-faint:#332D24;
+  --mono:'Fragment Mono',monospace;--pixel:'Press Start 2P',monospace;
+  --bounce:cubic-bezier(.34,1.56,.64,1);
+}
 html,body{height:100%;overflow:hidden}
 body{background:var(--bg);color:var(--ink);font-family:var(--mono);font-size:13px;
   display:flex;flex-direction:column;height:100vh;-webkit-font-smoothing:antialiased}
-.brand{flex-shrink:0;padding:16px 24px 0;display:flex;align-items:baseline;gap:10px}
-.brand-name{font-family:var(--pixel);font-size:18px;color:var(--orange)}
-.brand-tag{font-size:10px;color:var(--ink3);letter-spacing:.14em;text-transform:uppercase}
-.term{flex:1;overflow-y:auto;padding:12px 24px 6px;display:flex;flex-direction:column;gap:1px}
-.term::-webkit-scrollbar{width:3px}.term::-webkit-scrollbar-thumb{background:var(--border2)}
-.msg{display:flex;gap:8px;align-items:flex-start;padding:2px 0;line-height:1.65;font-size:13px}
-.mp{flex-shrink:0;width:14px;text-align:center}.mc{word-break:break-word;white-space:pre-wrap;flex:1}
-.ts{font-size:10px;color:var(--ink4);flex-shrink:0;margin-top:2px;width:36px}
-.msg-user .mp{color:var(--ink3)}.msg-user .mc{color:var(--ink2)}
-.msg-dot .mp{color:var(--orange)}.msg-dot .mc{color:var(--ink)}
-.msg-sys .mp{color:var(--ink4)}.msg-sys .mc{color:var(--ink3);font-size:11px}
-.msg-err .mp{color:#c04040}.msg-err .mc{color:#c04040}
-.msg-thought .mp{color:var(--gold)}.msg-thought .mc{color:var(--gold);font-size:12px}
-.msg-action .mp{color:var(--orange)}.msg-action .mc{color:var(--orange);font-size:12px}
-.msg-obs .mp{color:var(--green)}.msg-obs .mc{color:var(--green);font-size:12px}
-.msg-final .mp{color:var(--orange)}.msg-final .mc{color:var(--ink)}
-.statusbar{flex-shrink:0;padding:5px 24px;display:flex;align-items:center;
-  border-top:1px solid var(--border);font-size:11px;color:var(--ink3);background:var(--bg1)}
-.sb-seg{padding:0 12px;border-right:1px solid var(--border)}.sb-seg:first-child{padding-left:0}
-.sb-mode{color:var(--orange)}
+
+/* ── BRAND: 暴力字級跳躍,單一字體用到底但尺度誇張 ── */
+.brand{flex-shrink:0;padding:18px 24px 10px;display:flex;align-items:baseline;gap:12px;position:relative}
+.brand-name{font-family:var(--pixel);font-size:26px;color:var(--rust);letter-spacing:-.01em;position:relative}
+.brand-spark{position:absolute;top:-6px;right:-14px;color:var(--gold);font-size:11px;transform:rotate(12deg);user-select:none}
+.brand-tag{font-size:10px;color:var(--ink-mute);letter-spacing:.16em;text-transform:uppercase;
+  background:var(--bg2);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+
+/* ── TERMINAL OUTPUT ── */
+.term{flex:1;overflow-y:auto;padding:8px 24px 6px;display:flex;flex-direction:column;gap:3px}
+.term::-webkit-scrollbar{width:3px}.term::-webkit-scrollbar-thumb{background:var(--line)}
+.msg{display:flex;gap:8px;align-items:flex-start;padding:3px 0;line-height:1.65;font-size:13px}
+.mtag{flex-shrink:0;font-size:9px;font-weight:700;letter-spacing:.04em;padding:2px 7px;border-radius:999px;
+  text-transform:uppercase;line-height:1.5;margin-top:1px;white-space:nowrap}
+.mc{word-break:break-word;white-space:pre-wrap;flex:1;padding-top:1px}
+.ts{font-size:10px;color:var(--ink-faint);flex-shrink:0;margin-top:3px;width:34px}
+
+.msg-user .mtag{background:var(--bg2);color:var(--ink-soft);border:1px solid var(--line)}
+.msg-user .mc{color:var(--ink-soft)}
+.msg-dot .mtag{background:var(--rust);color:var(--bg)}
+.msg-dot .mc{color:var(--ink)}
+.msg-sys .mtag{background:transparent;color:var(--ink-faint)}
+.msg-sys .mc{color:var(--ink-mute);font-size:11px}
+.msg-err .mtag{background:var(--rose);color:var(--bg)}
+.msg-err .mc{color:var(--rose)}
+.msg-thought .mtag{background:var(--gold);color:var(--bg)}
+.msg-thought .mc{color:var(--gold);font-size:12px}
+.msg-action .mtag{background:var(--rust);color:var(--bg)}
+.msg-action .mc{color:var(--rust);font-size:12px}
+.msg-obs .mtag{background:var(--sage);color:var(--bg)}
+.msg-obs .mc{color:var(--sage);font-size:12px}
+.msg-final .mtag{background:var(--rust);color:var(--bg)}
+.msg-final .mc{color:var(--ink);font-size:13px}
+
+/* ── STATUS BAR: pill 徽章取代純文字 ── */
+.statusbar{flex-shrink:0;padding:8px 24px;display:flex;gap:7px;align-items:center;flex-wrap:wrap;
+  border-top:1px solid var(--line);background:var(--bg1)}
+.sb-pill{font-size:10px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);
+  color:var(--ink-mute);background:var(--bg2);font-weight:600;letter-spacing:.02em}
+.sb-pill.on{background:var(--rust);color:var(--bg);border-color:var(--rust)}
+.sb-pill.live{background:var(--sage);color:var(--bg);border-color:var(--sage)}
+.sb-pill.idle{background:var(--bg2);color:var(--ink-faint)}
+
+/* ── COMMAND PALETTE ── */
 .cmdpal{position:absolute;bottom:100%;left:0;right:0;background:var(--bg1);
-  border:1px solid var(--border2);border-bottom:none;z-index:100;display:none;max-height:200px;overflow-y:auto}
+  border:1.5px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;z-index:100;display:none;
+  max-height:210px;overflow-y:auto;overflow:hidden}
 .cmdpal.vis{display:block}
-.cpi{display:flex;gap:16px;padding:7px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s}
+.cpi{display:flex;gap:14px;align-items:center;padding:8px 14px;cursor:pointer;transition:background .12s}
 .cpi:hover,.cpi.sel{background:var(--bg2)}
-.cpk{color:var(--orange);width:130px;flex-shrink:0;font-size:12px}.cpd{color:var(--ink3);font-size:12px}
+.cpk{flex-shrink:0;font-size:10px;font-weight:700;color:var(--bg);background:var(--rust);
+  padding:2px 9px;border-radius:999px;letter-spacing:.02em}
+.cpd{color:var(--ink-mute);font-size:12px}
+
+/* ── INPUT ── */
 .input-section{flex-shrink:0;position:relative}
-.input-border{border-left:2px solid var(--orange);margin:0 0 0 24px;padding:11px 16px;
-  display:flex;align-items:flex-start;gap:10px;background:var(--bg);
-  transition:border-color .2s,border-width .15s}
-.input-border.agent{border-width:4px}
-.input-border.busy{animation:pulse .9s ease-in-out infinite}
-@keyframes pulse{0%,100%{border-color:var(--orange)}50%{border-color:var(--orange2)}}
-.mode-chr{color:var(--orange);font-size:14px;flex-shrink:0;margin-top:1px;user-select:none}
+.input-border{margin:0 24px 0 24px;padding:11px 16px;border-radius:14px;
+  border:2px solid var(--line);background:var(--bg1);
+  display:flex;align-items:flex-start;gap:10px;
+  transition:border-color .25s var(--bounce),background .25s}
+.input-border.agent{border-color:var(--rust);background:rgba(255,107,61,.06)}
+.input-border.busy{animation:pulse 1s var(--bounce) infinite}
+@keyframes pulse{0%,100%{border-color:var(--rust)}50%{border-color:var(--gold)}}
+.mode-chr{font-family:var(--pixel);color:var(--rust);font-size:12px;flex-shrink:0;margin-top:2px;
+  transition:transform .3s var(--bounce)}
 #inp{flex:1;background:none;border:none;outline:none;color:var(--ink);font-family:var(--mono);
-  font-size:13px;resize:none;max-height:120px;caret-color:var(--orange);line-height:1.55}
-#inp::placeholder{color:var(--ink4)}
-.model-line{padding:3px 16px 9px calc(24px + 4px);font-size:11px;color:var(--ink3);display:flex;gap:10px}
-.ml-mode{color:var(--orange)}
-.hints{flex-shrink:0;padding:7px 24px;display:flex;gap:18px;flex-wrap:wrap;
-  font-size:11px;color:var(--ink4);border-top:1px solid var(--border)}
-.hk{color:var(--ink3)}
-.mem-panel{position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.75);display:none;align-items:center;justify-content:center}
+  font-size:13px;resize:none;max-height:120px;caret-color:var(--rust);line-height:1.55}
+#inp::placeholder{color:var(--ink-faint)}
+.model-line{padding:7px 16px 0 calc(24px + 4px);font-size:10px;color:var(--ink-mute);display:flex;gap:8px;align-items:center}
+.ml-pill{background:var(--bg2);border:1px solid var(--line);border-radius:999px;padding:2px 9px;color:var(--ink-soft)}
+
+/* ── HINTS ── */
+.hints{flex-shrink:0;padding:10px 24px 14px;display:flex;gap:8px;flex-wrap:wrap}
+.hint-chip{font-size:10px;color:var(--ink-mute);background:var(--bg1);border:1px solid var(--line-soft);
+  border-radius:999px;padding:3px 10px}
+.hint-chip b{color:var(--rust);font-weight:700}
+
+/* ── MEMORY PANEL: 對話泡泡風格,呼應 comic speech-bubble 但保持機能性 ── */
+.mem-panel{position:fixed;inset:0;z-index:200;background:rgba(10,9,8,.85);display:none;
+  align-items:center;justify-content:center}
 .mem-panel.vis{display:flex}
-.mem-box{background:var(--bg1);border:1px solid var(--border2);width:min(500px,94vw);max-height:70vh;display:flex;flex-direction:column}
-.mem-head{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--ink2)}
-.mh-t{color:var(--orange)}.mem-close{cursor:pointer;color:var(--ink3)}
-.mem-list{overflow-y:auto;padding:8px;flex:1;display:flex;flex-direction:column;gap:5px}
-.mem-item{display:flex;gap:7px;align-items:flex-start;padding:5px 8px;background:var(--bg2);border-left:2px solid var(--border2);font-size:11px}
-.mem-idx{color:var(--orange);flex-shrink:0;width:16px}.mem-text{color:var(--ink2);flex:1;word-break:break-word}
-.mem-del{color:var(--ink4);cursor:pointer}.mem-del:hover{color:#c04040}
-.mem-empty{color:var(--ink3);font-size:11px;padding:14px;text-align:center}
-.mem-footer{padding:9px;border-top:1px solid var(--border);display:flex;gap:7px}
-.mem-add-inp{flex:1;background:var(--bg);border:1px solid var(--border2);padding:6px 9px;
-  color:var(--ink);font-family:var(--mono);font-size:11px;outline:none}
-.mem-add-inp:focus{border-color:var(--orange)}
-.mem-add-btn{padding:6px 11px;background:var(--orange);color:var(--bg);font-family:var(--mono);font-size:11px;border:none;cursor:pointer}
+.mem-box{background:var(--bg1);border:2px solid var(--line);border-radius:18px;
+  width:min(500px,94vw);max-height:70vh;display:flex;flex-direction:column;overflow:hidden}
+.mem-head{padding:14px 16px;border-bottom:1.5px solid var(--line);display:flex;justify-content:space-between;
+  align-items:center}
+.mh-t{font-size:11px;font-weight:700;color:var(--bg);background:var(--rust);padding:3px 11px;
+  border-radius:999px;letter-spacing:.03em;text-transform:uppercase}
+.mem-close{cursor:pointer;color:var(--ink-mute);font-size:18px;line-height:1;
+  width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:999px;
+  transition:background .15s}
+.mem-close:hover{background:var(--bg2);color:var(--ink)}
+.mem-list{overflow-y:auto;padding:10px;flex:1;display:flex;flex-direction:column;gap:7px}
+.mem-item{display:flex;gap:9px;align-items:flex-start;padding:9px 12px;background:var(--bg2);
+  border-radius:12px 12px 12px 3px;font-size:11.5px;border:1px solid var(--line-soft)}
+.mem-idx{color:var(--bg);background:var(--gold);flex-shrink:0;width:18px;height:18px;border-radius:999px;
+  font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.mem-text{color:var(--ink-soft);flex:1;word-break:break-word}
+.mem-del{color:var(--ink-faint);cursor:pointer;flex-shrink:0;transition:color .15s}
+.mem-del:hover{color:var(--rose)}
+.mem-empty{color:var(--ink-mute);font-size:11px;padding:20px;text-align:center;line-height:1.7}
+.mem-footer{padding:10px;border-top:1.5px solid var(--line);display:flex;gap:8px}
+.mem-add-inp{flex:1;background:var(--bg);border:1.5px solid var(--line);border-radius:999px;padding:8px 14px;
+  color:var(--ink);font-family:var(--mono);font-size:11px;outline:none;transition:border-color .15s}
+.mem-add-inp:focus{border-color:var(--rust)}
+.mem-add-btn{padding:8px 16px;background:var(--rust);color:var(--bg);font-family:var(--mono);font-size:11px;
+  font-weight:700;border:none;border-radius:999px;cursor:pointer;transition:transform .15s var(--bounce)}
+.mem-add-btn:active{transform:scale(.92)}
 </style>
 </head>
 <body>
 <div class="brand">
-  <span class="brand-name">DOT</span>
+  <span class="brand-name">DOT<span class="brand-spark">✦</span></span>
   <span class="brand-tag">Fabrica · Autonomous Agent</span>
 </div>
 <div class="term" id="term"></div>
 <div class="statusbar">
-  <div class="sb-seg"><span id="sb-mode" class="sb-mode">CHAT</span></div>
-  <div class="sb-seg" id="sb-model">loading…</div>
-  <div class="sb-seg" id="sb-gen">NEAT —</div>
-  <div class="sb-seg" id="sb-mem">0 memories</div>
-  <div class="sb-seg" id="sb-live" style="color:var(--ink4)">connecting…</div>
+  <span class="sb-pill on" id="sb-mode">CHAT</span>
+  <span class="sb-pill idle" id="sb-model">loading…</span>
+  <span class="sb-pill idle" id="sb-gen">NEAT —</span>
+  <span class="sb-pill idle" id="sb-mem">0 memories</span>
+  <span class="sb-pill idle" id="sb-live">connecting…</span>
 </div>
 <div class="input-section">
   <div class="cmdpal" id="cmdpal"></div>
@@ -585,14 +641,14 @@ body{background:var(--bg);color:var(--ink);font-family:var(--mono);font-size:13p
     <span class="mode-chr" id="mode-chr">›</span>
     <textarea id="inp" rows="1" placeholder="Type your message… (/ commands · tab switch mode)"></textarea>
   </div>
-  <div class="model-line"><span class="ml-mode" id="ml-mode">CHAT</span> · <span id="ml-model">—</span></div>
+  <div class="model-line"><span class="ml-pill" id="ml-mode">CHAT</span><span id="ml-model">—</span></div>
 </div>
 <div class="hints">
-  <span><span class="hk">tab</span> switch mode</span>
-  <span><span class="hk">ctrl+p</span> memory</span>
-  <span><span class="hk">/</span> commands</span>
-  <span><span class="hk">$goal</span> agent</span>
-  <span><span class="hk">↑↓</span> history</span>
+  <span class="hint-chip"><b>tab</b> switch mode</span>
+  <span class="hint-chip"><b>ctrl+p</b> memory</span>
+  <span class="hint-chip"><b>/</b> commands</span>
+  <span class="hint-chip"><b>$goal</b> agent</span>
+  <span class="hint-chip"><b>↑↓</b> history</span>
 </div>
 <div class="mem-panel" id="mem-panel">
   <div class="mem-box">
@@ -622,16 +678,16 @@ var CMDS=[
 ];
 
 function ts(){return new Date().toTimeString().slice(0,5)}
-function addMsg(type,prefix,content){
+function addMsg(type,tag,content){
   var $t=document.getElementById('term');
   var d=document.createElement('div');d.className='msg msg-'+type;
   var s=(content||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
-  d.innerHTML='<span class="ts">'+ts()+'</span><span class="mp">'+prefix+'</span><span class="mc">'+s+'</span>';
+  d.innerHTML='<span class="ts">'+ts()+'</span><span class="mtag">'+tag+'</span><span class="mc">'+s+'</span>';
   $t.appendChild(d);$t.scrollTop=$t.scrollHeight;
   return d.querySelector('.mc');
 }
-function sys(m){addMsg('sys','▸',m)}
-function err(m){addMsg('err','✗',m)}
+function sys(m){addMsg('sys','·',m)}
+function err(m){addMsg('err','ERR',m)}
 function clearTerm(){document.getElementById('term').innerHTML='';sys('Terminal cleared')}
 
 function toggleMode(m){
@@ -639,9 +695,16 @@ function toggleMode(m){
   var ib=document.getElementById('input-border');
   var chr=document.getElementById('mode-chr');
   var inp=document.getElementById('inp');
-  if(mode==='agent'){ib.classList.add('agent');chr.textContent='$';inp.placeholder='Enter goal… (DOT will plan, search, spawn agents, iterate)';}
-  else{ib.classList.remove('agent');chr.textContent='›';inp.placeholder='Type your message… (/ commands · tab switch mode)';}
-  document.getElementById('sb-mode').textContent=mode.toUpperCase();
+  var sbm=document.getElementById('sb-mode');
+  if(mode==='agent'){
+    ib.classList.add('agent');chr.textContent='$';
+    inp.placeholder='Enter goal… (DOT will plan, search, spawn agents, iterate)';
+    sbm.textContent='AGENT';
+  }else{
+    ib.classList.remove('agent');chr.textContent='›';
+    inp.placeholder='Type your message… (/ commands · tab switch mode)';
+    sbm.textContent='CHAT';
+  }
   document.getElementById('ml-mode').textContent=mode.toUpperCase();
   sys('Mode → '+mode.toUpperCase());
 }
@@ -666,7 +729,7 @@ function runCmd(key,args){
   else if(key==='/chat')toggleMode('chat');
   else if(key==='/clear')clearTerm();
   else if(key==='/memory')openMemory();
-  else if(key==='/help'){sys('Commands:');CMDS.forEach(function(c){addMsg('sys',' ',c.k+'  —  '+c.d)})}
+  else if(key==='/help'){sys('Commands:');CMDS.forEach(function(c){addMsg('sys','·',c.k+'  —  '+c.d)})}
   else if(key==='/status')cmdStatus();
   else if(key==='/improve')cmdImprove();
   else if(key==='/evolve')cmdEvolve(parseInt(args)||100);
@@ -689,15 +752,15 @@ async function cmdImprove(){
   sys('DOT analyzing and proposing code changes…');
   try{var r=await fetch('/api/self-improve',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     var d=await r.json();
-    if(d.ok){sys('✓ '+d.expected_effect);if(d.analysis)addMsg('sys',' ',d.analysis)}
-    else{err(d.error||'failed');if(d.analysis)addMsg('sys',' ',d.analysis)}}
+    if(d.ok){sys('✓ '+d.expected_effect);if(d.analysis)addMsg('sys','·',d.analysis)}
+    else{err(d.error||'failed');if(d.analysis)addMsg('sys','·',d.analysis)}}
   catch(e){err('improve: '+e)}
 }
 
 async function sendChat(text){
   if(!workerUrl){err('CHAT_WORKER_URL not set');return}
   chatHistory.push({role:'user',content:text});
-  var bub=addMsg('dot','◈','…');
+  var bub=addMsg('dot','DOT','…');
   try{
     var memCtx=agentMemory.length?'\n\n[Context Memory]\n'+agentMemory.map(function(m,i){return (i+1)+'. '+m}).join('\n'):'';
     var r=await fetch(workerUrl,{method:'POST',headers:{'Content-Type':'application/json'},
@@ -722,19 +785,19 @@ async function sendAgent(goal){
     document.getElementById('input-border').classList.remove('busy');
     if(d.steps)d.steps.forEach(function(s){
       if(s.type==='step'){
-        if(s.thought)addMsg('thought','⟳','THOUGHT  '+s.thought);
-        if(s.action)addMsg('action','⚡','ACTION   '+s.action+(s.input?' → '+String(s.input).slice(0,80):''));
+        if(s.thought)addMsg('thought','THINK',s.thought);
+        if(s.action)addMsg('action','RUN',s.action+(s.input?' → '+String(s.input).slice(0,80):''));
       }else if(s.type==='observation'){
-        addMsg('obs','◉','OBS['+s.tool+']  '+String(s.result||'').slice(0,200));
+        addMsg('obs','OBS · '+s.tool,String(s.result||'').slice(0,200));
       }else if(s.type==='error'){
-        addMsg('err','✗','ERROR  '+String(s.content||'').slice(0,200));
+        addMsg('err','ERR',String(s.content||'').slice(0,200));
       }else if(s.type==='loop_break'){
-        addMsg('sys','▸',s.content||'迴圈中斷');
+        sys(s.content||'迴圈中斷');
       }
     });
     if(d.memory&&d.memory.length){agentMemory=d.memory;saveMemory();}
     if(d.final_answer){
-      addMsg('final','◈',d.final_answer);
+      addMsg('final','DOT',d.final_answer);
       chatHistory.push({role:'user',content:'[AGENT] '+goal});
       chatHistory.push({role:'assistant',content:d.final_answer});
       fetch('/api/chat/store',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -763,20 +826,23 @@ document.getElementById('mem-panel').addEventListener('click',function(e){if(e.t
 
 function updateStatus(d){
   if(d.total_generations!==undefined){
-    document.getElementById('sb-gen').textContent='gen '+d.total_generations+' · fit '+d.best_fitness;
-    document.getElementById('sb-live').textContent='NEAT ✓';
-    document.getElementById('sb-live').style.color='var(--green)';
+    var g=document.getElementById('sb-gen');
+    g.textContent='gen '+d.total_generations+' · '+d.best_fitness;
+    g.className='sb-pill on';
+    var l=document.getElementById('sb-live');
+    l.textContent='NEAT ✓';l.className='sb-pill live';
   }
 }
 
 (async function boot(){
-  sys('DOT v3.0 · Fabrica OS · type /help');
+  sys('DOT v4.0 · Fabrica OS · type /help');
   try{var r=await fetch('/api/system');var d=await r.json();
     sysPrompt=d.prompt||'';workerUrl=d.chat_worker_url||'';model=d.model||'—';
     document.getElementById('ml-model').textContent=model;
     document.getElementById('sb-model').textContent=model;
-    document.getElementById('sb-live').textContent=workerUrl?'worker ✓':'no worker';
-    document.getElementById('sb-live').style.color=workerUrl?'var(--green)':'var(--ink3)';
+    var l=document.getElementById('sb-live');
+    l.textContent=workerUrl?'worker ✓':'no worker';
+    l.className=workerUrl?'sb-pill live':'sb-pill idle';
     sys('Ready · '+model);
   }catch(e){err('boot: '+e)}
   try{var r2=await fetch('/api/status');var d2=await r2.json();if(d2.total_generations)updateStatus(d2);}catch(e){}
@@ -805,40 +871,31 @@ $inp.addEventListener('keydown',function(e){
     $inp.value='';$inp.style.height='auto';hideCmdPal();histIdx=-1;inputHist.unshift(text);
     if(text.startsWith('/')){runCmd(text.split(' ')[0],text.split(' ').slice(1).join(' '));return}
     if(text.startsWith('@')){openMemory();return}
-
-    // 偵測 $ 分隔的多個目標,依序執行而不是合併成一個亂掉的目標
     if(text.indexOf('$')!==-1){
       var goals=text.split(/\$+/).map(function(s){return s.trim()}).filter(Boolean);
-      if(goals.length>1){
-        busy=true;runGoalQueue(goals).finally(function(){busy=false});return;
-      }
+      if(goals.length>1){busy=true;runGoalQueue(goals).finally(function(){busy=false});return}
       var single=goals[0]||text.replace(/^\$+/,'').trim();
-      if(single){busy=true;addMsg('user','→',single);sendAgent(single).finally(function(){busy=false});}
+      if(single){busy=true;addMsg('user','YOU',single);sendAgent(single).finally(function(){busy=false});}
       return;
     }
-
     busy=true;
-    if(mode==='agent'){addMsg('user','→',text);sendAgent(text).finally(function(){busy=false});}
-    else{addMsg('user','›',text);sendChat(text).finally(function(){busy=false});}
+    if(mode==='agent'){addMsg('user','YOU',text);sendAgent(text).finally(function(){busy=false});}
+    else{addMsg('user','YOU',text);sendChat(text).finally(function(){busy=false});}
   }
 });
 
 async function runGoalQueue(goals){
   sys('偵測到 '+goals.length+' 個目標，將依序執行（每個間隔 3 秒避免額度超限）');
   for(var i=0;i<goals.length;i++){
-    addMsg('user','→','['+(i+1)+'/'+goals.length+'] '+goals[i]);
+    addMsg('user','YOU','['+(i+1)+'/'+goals.length+'] '+goals[i]);
     await sendAgent(goals[i]);
-    if(i<goals.length-1){
-      sys('等待 3 秒…');
-      await new Promise(function(r){setTimeout(r,3000)});
-    }
+    if(i<goals.length-1){sys('等待 3 秒…');await new Promise(function(r){setTimeout(r,3000)});}
   }
   sys('全部 '+goals.length+' 個目標已完成');
 }
 </script>
 </body>
 </html>"""
-
 
 @app.get("/", response_class=HTMLResponse)
 async def terminal():
@@ -1120,3 +1177,4 @@ async def improve_history_endpoint():
     except Exception:
         hist = []
     return JSONResponse({"history": hist})
+
