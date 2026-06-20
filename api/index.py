@@ -273,10 +273,10 @@ def evolve(pop, data, generations, refine_every=10):
 
 _XS = [-math.pi + i * (2 * math.pi / 39) for i in range(40)]
 TASKS = {
-    "a": [(x, math.sin(17 * x) * math.cos(9 * x) + 0.5 * x**4 + 0.4 * abs(x) + 0.3 * x**6) for x in _XS],
+    "a": [(x, math.sin(11 * x) * math.cos(5 * x) + 0.4 * x**3 + 0.3 * abs(x) + 0.2 * x**5) for x in _XS],
     "b": [(x, math.sin(7 * x) * math.cos(4 * x) + 0.2 * x**3 + 0.1 * abs(x) + 0.05 * x**4) for x in _XS],
     "c": [(x, math.sin(9 * x) * math.cos(3 * x) + 0.3 * x**4 + 0.2 * abs(x**2)) for x in _XS],
-    "d": [(x, math.sin(13 * x) * math.cos(7 * x) + 0.4 * x**3 + 0.3 * abs(x) + 0.2 * x**5) for x in _XS],
+    "d": [(x, math.sin(3 * x) * math.cos(2 * x) + 0.3 * x**2 + 0.2 * abs(x)) for x in _XS],
 }
 TASK_ORDER = ["a", "b", "c", "d"]
 
@@ -1020,10 +1020,10 @@ def extract_tasks_code(content: str) -> str:
     return ""
 
 
-def call_worker_meta(state: dict, tasks_code: str, history_str: str) -> dict:
+def call_worker_meta(state: dict, tasks_code: str, history_str: str, hint: str = "") -> dict:
     if not CHAT_WORKER_URL:
         return {"error": "CHAT_WORKER_URL not set"}
-    payload = {"state": state, "tasks_code": tasks_code, "history": history_str}
+    payload = {"state": state, "tasks_code": tasks_code, "history": history_str, "hint": hint}
     req = urllib.request.Request(
         CHAT_WORKER_URL.rstrip("/") + "/meta",
         data=json.dumps(payload).encode(),
@@ -1054,6 +1054,12 @@ async def self_improve_endpoint(request: Request):
     if not GITHUB_TOKEN or not GITHUB_REPO:
         return JSONResponse({"error": "GITHUB_TOKEN 或 GITHUB_REPO 未設定"})
 
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    hint = str(body.get("hint") or "")[:400]  # agent 呼叫 write_code 時的診斷,之前完全被丟掉沒用到
+
     # 1. 讀演化狀態
     state = load_state()
     if not state:
@@ -1077,7 +1083,7 @@ async def self_improve_endpoint(request: Request):
         return JSONResponse({"error": "找不到 TASKS 程式碼區塊"})
 
     # 3. 呼叫 Cloudflare Worker 讓 DOT 分析並提案
-    meta_result = call_worker_meta(context, tasks_code, json.dumps(context["history_tail"], indent=2))
+    meta_result = call_worker_meta(context, tasks_code, json.dumps(context["history_tail"], indent=2), hint)
     if "error" in meta_result:
         return JSONResponse({"error": f"DOT meta 分析失敗: {meta_result['error']}"})
 
