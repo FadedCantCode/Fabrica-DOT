@@ -387,6 +387,47 @@ def clear_pending_improve():
     redis_command("DEL", PENDING_IMPROVE_KEY)
 
 
+DECISION_LOG_KEY = "dot_improve_decisions"
+
+
+def get_decision_log() -> list:
+    result = redis_command("GET", DECISION_LOG_KEY)
+    if result and result.get("result"):
+        return json.loads(result["result"])
+    return []
+
+
+def append_decision(record: dict):
+    log = get_decision_log()
+    log.append(record)
+    redis_command("SET", DECISION_LOG_KEY, json.dumps(log[-200:]))
+
+
+def check_staleness(hint: str, analysis: str, current_generation: int):
+    """粗略的證據新鮮度檢查:從 hint/analysis 文字裡抓世代數字,
+    跟現在的世代比,如果差距超過一整輪 SWITCH_EVERY,代表引用的可能是
+    已經被取代的舊資料(今晚實際撞過:提案引用的是被取代前的任務狀態)。
+    這是一個盡力而為的啟發式檢查,不是精確的證據追蹤,沒抓到不代表沒問題。"""
+    try:
+        text = hint + " " + analysis
+        cited = []
+        for m in re.finditer(r"gen\s*(\d{3,6}(?:\s*,\s*\d{3,6})*)", text, re.I):
+            cited.extend(int(n) for n in re.findall(r"\d{3,6}", m.group(1)))
+        if not cited:
+            return None
+        max_cited = max(cited)
+        gap = current_generation - max_cited
+        if gap >= SWITCH_EVERY:
+            return (
+                f"⚠️ 提案引用的世代數字最新只到 gen{max_cited}，但現在已經是 gen{current_generation}"
+                f"（差距 {gap} 代，超過一整輪任務輪替）。引用的證據可能已經過時，"
+                f"建議先確認被提到的任務內容最近有沒有被手動改過。"
+            )
+        return None
+    except Exception:
+        return None
+
+
 def pop_to_dict(pop):
     return {
         "pop_size": pop.pop_size,
@@ -654,6 +695,7 @@ var CMDS=[
   {k:'/pending',d:'顯示目前待審查的提案'},
   {k:'/approve',d:'核准待審查的提案,真的 commit 到 GitHub'},
   {k:'/reject', d:'拒絕待審查的提案,不會 commit'},
+  {k:'/stats',  d:'顯示審查統計(核准率/拒絕原因)'},
   {k:'/memory', d:'顯示/編輯 agent 記憶'},
   {k:'/clear',  d:'清空終端'},
   {k:'/help',   d:'顯示所有指令'},
@@ -715,8 +757,9 @@ function runCmd(key,args){
   else if(key==='/status')cmdStatus();
   else if(key==='/improve')cmdImprove();
   else if(key==='/pending')cmdPending();
-  else if(key==='/approve')cmdApprove();
-  else if(key==='/reject')cmdReject();
+  else if(key==='/approve')cmdApprove(args);
+  else if(key==='/reject')cmdReject(args);
+  else if(key==='/stats')cmdStats();
   else if(key==='/evolve')cmdEvolve(parseInt(args)||100);
   else err('Unknown command: '+key+'. /help');
 }
@@ -741,8 +784,9 @@ async function cmdImprove(){
       sys('提案已產生,等待審查:');
       addMsg('sys','·','預期效果: '+d.expected_effect);
       if(d.analysis)addMsg('sys','·','分析: '+d.analysis);
-      if(d.integrity_warning)addMsg('err','⚠','參照完整性檢查: '+d.integrity_warning);
-      addMsg('sys','·','用 /approve 核准、/reject 拒絕、或 /pending 再看一次');
+      if(d.integrity_warning)addMsg('err','⚠','參照完整性: '+d.integrity_warning);
+      if(d.staleness_warning)addMsg('err','⚠','證據新鮮度: '+d.staleness_warning);
+      addMsg('sys','·','用 /approve [備註]、/reject [原因]、或 /pending 再看一次');
     }else if(d.status==='pending_approval'&&!d.ok){
       sys(d.message||'已經有提案在等審查了');
     }else{err(d.error||'failed');if(d.analysis)addMsg('sys','·',d.analysis)}}
@@ -757,24 +801,35 @@ async function cmdPending(){
     if(p.analysis)addMsg('sys','·','分析: '+p.analysis);
     if(p.hint)addMsg('sys','·','agent 診斷: '+p.hint);
     if(p.integrity_warning)addMsg('err','⚠',p.integrity_warning);
+    if(p.staleness_warning)addMsg('err','⚠',p.staleness_warning);
     addMsg('sys','·','OLD: '+String(p.old_code).slice(0,200));
     addMsg('sys','·','NEW: '+String(p.new_code).slice(0,200));
   }catch(e){err('pending: '+e)}
 }
-async function cmdApprove(){
+async function cmdApprove(note){
   sys('核准中,真的要 commit 到 GitHub 了…');
-  try{var r=await fetch('/api/self-improve/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  try{var r=await fetch('/api/self-improve/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:note||''})});
     var d=await r.json();
     if(d.ok){sys('✓ 已 commit: '+d.expected_effect);if(d.commit_url)addMsg('sys','·',d.commit_url)}
     else{err(d.error||'approve failed')}}
   catch(e){err('approve: '+e)}
 }
-async function cmdReject(){
-  try{var r=await fetch('/api/self-improve/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+async function cmdReject(reason){
+  try{var r=await fetch('/api/self-improve/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason||''})});
     var d=await r.json();
-    if(d.ok){sys('提案已拒絕,沒有 commit')}
+    if(d.ok){sys('提案已拒絕,沒有 commit'+(reason?'（原因: '+reason+'）':''))}
     else{err(d.error||'reject failed')}}
   catch(e){err('reject: '+e)}
+}
+async function cmdStats(){
+  try{var r=await fetch('/api/self-improve/stats');var d=await r.json();
+    if(!d.total_decisions){sys('還沒有任何審查紀錄');return}
+    sys('審查統計: 共 '+d.total_decisions+' 筆 · 核准 '+d.approved+' · 拒絕 '+d.rejected+' · 核准率 '+(d.approval_rate!=null?(d.approval_rate*100).toFixed(1)+'%':'—'));
+    if(d.recent_rejections&&d.recent_rejections.length){
+      addMsg('sys','·','最近拒絕原因:');
+      d.recent_rejections.forEach(function(r){addMsg('sys','·','  gen'+r.generation+': '+(r.reason||'(無))'))});
+    }
+  }catch(e){err('stats: '+e)}
 }
 
 async function sendChat(text){
@@ -1241,6 +1296,8 @@ async def self_improve_endpoint(request: Request):
     except Exception:
         pass  # 這個檢查本身失敗不該擋住正常流程,只是少一道防線
 
+    staleness_warning = check_staleness(hint, change.get("analysis", ""), state["generation"])
+
     # 5. 不直接 commit —— 存成待審查狀態,等人核准才真的寫進 GitHub
     proposal = {
         "generation": state["generation"],
@@ -1252,6 +1309,7 @@ async def self_improve_endpoint(request: Request):
         "new_code": new_code,
         "file_sha": file_sha,
         "integrity_warning": integrity_warning,
+        "staleness_warning": staleness_warning,
         "created_at": time.time(),
     }
     save_pending_improve(proposal)
@@ -1265,6 +1323,7 @@ async def self_improve_endpoint(request: Request):
         "old_code": old_code,
         "new_code": new_code,
         "integrity_warning": integrity_warning,
+        "staleness_warning": staleness_warning,
     })
 
 
@@ -1280,6 +1339,12 @@ async def approve_improve_endpoint(request: Request):
         if request.headers.get("x-improve-secret", "") != IMPROVE_SECRET:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
 
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    approve_note = str(body.get("note") or "")[:300]
+
     pending = get_pending_improve()
     if not pending:
         return JSONResponse({"error": "目前沒有待審查的提案"})
@@ -1294,6 +1359,11 @@ async def approve_improve_endpoint(request: Request):
 
     if pending["old_code"] not in file_content:
         clear_pending_improve()
+        append_decision({
+            "generation": pending["generation"], "hint": pending.get("hint", ""),
+            "analysis": pending.get("analysis", ""), "decision": "rejected",
+            "reason": "(自動作廢) 核准時 old_code 已對不上現在的檔案內容", "decided_at": time.time(),
+        })
         return JSONResponse({"error": "檔案內容已經變了,提案裡的 old_code 對不上現在的內容,提案已作廢,請重新產生"})
 
     new_content = file_content.replace(pending["old_code"], pending["new_code"], 1)
@@ -1301,6 +1371,11 @@ async def approve_improve_endpoint(request: Request):
         _ast.parse(new_content)
     except SyntaxError as e:
         clear_pending_improve()
+        append_decision({
+            "generation": pending["generation"], "hint": pending.get("hint", ""),
+            "analysis": pending.get("analysis", ""), "decision": "rejected",
+            "reason": f"(自動作廢) 核准時語法驗證失敗: {e}", "decided_at": time.time(),
+        })
         return JSONResponse({"error": f"核准時語法驗證失敗,提案已作廢: {e}"})
 
     commit_msg = f"[DOT self-improve, human-approved] gen={pending['generation']}: {pending.get('expected_effect', 'task update')[:80]}"
@@ -1324,6 +1399,19 @@ async def approve_improve_endpoint(request: Request):
     except Exception:
         pass
 
+    append_decision({
+        "generation": pending["generation"],
+        "hint": pending.get("hint", ""),
+        "analysis": pending.get("analysis", ""),
+        "expected_effect": pending.get("expected_effect", ""),
+        "integrity_warning": pending.get("integrity_warning"),
+        "staleness_warning": pending.get("staleness_warning"),
+        "decision": "approved",
+        "reason": approve_note,
+        "commit_url": commit_result.get("url", ""),
+        "decided_at": time.time(),
+    })
+
     clear_pending_improve()
     return JSONResponse({"ok": True, "commit_url": commit_result.get("url"), "expected_effect": pending.get("expected_effect")})
 
@@ -1333,11 +1421,49 @@ async def reject_improve_endpoint(request: Request):
     if IMPROVE_SECRET:
         if request.headers.get("x-improve-secret", "") != IMPROVE_SECRET:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reason = str(body.get("reason") or "(未填寫原因)")[:300]
+
     pending = get_pending_improve()
     if not pending:
         return JSONResponse({"error": "目前沒有待審查的提案"})
+
+    append_decision({
+        "generation": pending["generation"],
+        "hint": pending.get("hint", ""),
+        "analysis": pending.get("analysis", ""),
+        "expected_effect": pending.get("expected_effect", ""),
+        "integrity_warning": pending.get("integrity_warning"),
+        "staleness_warning": pending.get("staleness_warning"),
+        "decision": "rejected",
+        "reason": reason,
+        "decided_at": time.time(),
+    })
+
     clear_pending_improve()
     return JSONResponse({"ok": True, "message": "提案已拒絕,沒有 commit"})
+
+
+@app.get("/api/self-improve/stats")
+async def self_improve_stats_endpoint():
+    log = get_decision_log()
+    approved = [d for d in log if d.get("decision") == "approved"]
+    rejected = [d for d in log if d.get("decision") == "rejected"]
+    total = len(log)
+    return JSONResponse({
+        "total_decisions": total,
+        "approved": len(approved),
+        "rejected": len(rejected),
+        "approval_rate": round(len(approved) / total, 3) if total else None,
+        "recent_rejections": [
+            {"generation": d.get("generation"), "reason": d.get("reason"), "expected_effect": d.get("expected_effect")}
+            for d in rejected[-10:]
+        ],
+        "recent_decisions": log[-20:],
+    })
 
 
 @app.get("/api/improve-history")
