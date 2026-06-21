@@ -20,6 +20,8 @@ import json
 import math
 import os
 import random
+import re
+import time
 
 
 # ============================================================
@@ -273,10 +275,10 @@ def evolve(pop, data, generations, refine_every=10):
 
 _XS = [-math.pi + i * (2 * math.pi / 39) for i in range(40)]
 TASKS = {
-    "a": [(x, math.sin(7 * x) * math.cos(5 * x) + 0.3 * x**3 + 0.2 * abs(x) + 0.1 * x**2 * math.sin(2 * x)) for x in _XS],
-    "b": [(x, math.sin(13 * x) * math.cos(7 * x) + 0.4 * x**3 + 0.2 * abs(x) + 0.1 * x**5 + 0.05 * x**2 * math.sin(3 * x) + 0.01 * x**7 * math.cos(5 * x)) for x in _XS],
-    "c": [(x, math.sin(23 * x) * math.cos(13 * x) + 0.7 * x**6 + 0.4 * abs(x**4) + 0.1 * x**8) for x in _XS],
-    "d": [(x, math.sin(17 * x) * math.cos(11 * x) + 0.5 * x**8 + 0.3 * abs(x**6) + 0.2 * x**10 + 0.1 * x**3 * math.sin(3 * x)) for x in _XS],
+    "a": [(x, math.sin(11 * x) * math.cos(5 * x) + 0.4 * x**3 + 0.3 * abs(x) + 0.2 * x**5) for x in _XS],
+    "b": [(x, math.sin(7 * x) * math.cos(4 * x) + 0.2 * x**3 + 0.1 * abs(x) + 0.05 * x**4) for x in _XS],
+    "c": [(x, math.sin(9 * x) * math.cos(3 * x) + 0.3 * x**4 + 0.2 * abs(x**2)) for x in _XS],
+    "d": [(x, math.sin(3 * x) * math.cos(2 * x) + 0.3 * x**2 + 0.2 * abs(x)) for x in _XS],
 }
 TASK_ORDER = ["a", "b", "c", "d"]
 
@@ -365,6 +367,24 @@ def get_agent_memory() -> list:
 def save_agent_memory(memory: list):
     # 跟 Worker 的 remember 工具裡的上限一致(50 筆),避免無限長
     redis_command("SET", MEMORY_KEY, json.dumps(memory[-50:]))
+
+
+PENDING_IMPROVE_KEY = "dot_pending_improve"
+
+
+def get_pending_improve():
+    result = redis_command("GET", PENDING_IMPROVE_KEY)
+    if result and result.get("result"):
+        return json.loads(result["result"])
+    return None
+
+
+def save_pending_improve(proposal: dict):
+    redis_command("SET", PENDING_IMPROVE_KEY, json.dumps(proposal))
+
+
+def clear_pending_improve():
+    redis_command("DEL", PENDING_IMPROVE_KEY)
 
 
 def pop_to_dict(pop):
@@ -630,7 +650,10 @@ var CMDS=[
   {k:'/chat',   d:'切換到對話模式'},
   {k:'/evolve', d:'/evolve [N]  跑 N 代 NEAT 演化'},
   {k:'/status', d:'顯示 NEAT 演化狀態'},
-  {k:'/improve',d:'DOT 自動分析並 commit 改進'},
+  {k:'/improve',d:'DOT 分析並產生改進提案(不會直接 commit)'},
+  {k:'/pending',d:'顯示目前待審查的提案'},
+  {k:'/approve',d:'核准待審查的提案,真的 commit 到 GitHub'},
+  {k:'/reject', d:'拒絕待審查的提案,不會 commit'},
   {k:'/memory', d:'顯示/編輯 agent 記憶'},
   {k:'/clear',  d:'清空終端'},
   {k:'/help',   d:'顯示所有指令'},
@@ -691,6 +714,9 @@ function runCmd(key,args){
   else if(key==='/help'){sys('Commands:');CMDS.forEach(function(c){addMsg('sys','·',c.k+'  —  '+c.d)})}
   else if(key==='/status')cmdStatus();
   else if(key==='/improve')cmdImprove();
+  else if(key==='/pending')cmdPending();
+  else if(key==='/approve')cmdApprove();
+  else if(key==='/reject')cmdReject();
   else if(key==='/evolve')cmdEvolve(parseInt(args)||100);
   else err('Unknown command: '+key+'. /help');
 }
@@ -708,12 +734,47 @@ async function cmdStatus(){
   catch(e){err('status: '+e)}
 }
 async function cmdImprove(){
-  sys('DOT analyzing and proposing code changes…');
+  sys('DOT analyzing and proposing a change… (won\'t commit yet, needs approval)');
   try{var r=await fetch('/api/self-improve',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     var d=await r.json();
-    if(d.ok){sys('✓ '+d.expected_effect);if(d.analysis)addMsg('sys','·',d.analysis)}
-    else{err(d.error||'failed');if(d.analysis)addMsg('sys','·',d.analysis)}}
+    if(d.status==='pending_approval'&&d.ok){
+      sys('提案已產生,等待審查:');
+      addMsg('sys','·','預期效果: '+d.expected_effect);
+      if(d.analysis)addMsg('sys','·','分析: '+d.analysis);
+      if(d.integrity_warning)addMsg('err','⚠','參照完整性檢查: '+d.integrity_warning);
+      addMsg('sys','·','用 /approve 核准、/reject 拒絕、或 /pending 再看一次');
+    }else if(d.status==='pending_approval'&&!d.ok){
+      sys(d.message||'已經有提案在等審查了');
+    }else{err(d.error||'failed');if(d.analysis)addMsg('sys','·',d.analysis)}}
   catch(e){err('improve: '+e)}
+}
+async function cmdPending(){
+  try{var r=await fetch('/api/self-improve/pending');var d=await r.json();
+    if(!d.pending){sys('目前沒有待審查的提案');return}
+    var p=d.pending;
+    sys('待審查提案 (gen='+p.generation+'):');
+    addMsg('sys','·','預期效果: '+p.expected_effect);
+    if(p.analysis)addMsg('sys','·','分析: '+p.analysis);
+    if(p.hint)addMsg('sys','·','agent 診斷: '+p.hint);
+    if(p.integrity_warning)addMsg('err','⚠',p.integrity_warning);
+    addMsg('sys','·','OLD: '+String(p.old_code).slice(0,200));
+    addMsg('sys','·','NEW: '+String(p.new_code).slice(0,200));
+  }catch(e){err('pending: '+e)}
+}
+async function cmdApprove(){
+  sys('核准中,真的要 commit 到 GitHub 了…');
+  try{var r=await fetch('/api/self-improve/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    var d=await r.json();
+    if(d.ok){sys('✓ 已 commit: '+d.expected_effect);if(d.commit_url)addMsg('sys','·',d.commit_url)}
+    else{err(d.error||'approve failed')}}
+  catch(e){err('approve: '+e)}
+}
+async function cmdReject(){
+  try{var r=await fetch('/api/self-improve/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    var d=await r.json();
+    if(d.ok){sys('提案已拒絕,沒有 commit')}
+    else{err(d.error||'reject failed')}}
+  catch(e){err('reject: '+e)}
 }
 
 async function sendChat(text){
@@ -1100,7 +1161,17 @@ async def self_improve_endpoint(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    hint = str(body.get("hint") or "")[:400]  # agent 呼叫 write_code 時的診斷,之前完全被丟掉沒用到
+    hint = str(body.get("hint") or "")[:400]  # agent 呼叫 write_code 時的診斷
+
+    # 已經有提案在等審查的話,不要再生一個新的蓋過去
+    existing_pending = get_pending_improve()
+    if existing_pending:
+        return JSONResponse({
+            "ok": False,
+            "status": "pending_approval",
+            "message": "已經有一個提案在等你審查,先處理那個(/api/self-improve/approve 或 /reject)",
+            "pending": existing_pending,
+        })
 
     # 1. 讀演化狀態
     state = load_state()
@@ -1149,23 +1220,101 @@ async def self_improve_endpoint(request: Request):
         _ast.parse(new_content)
     except SyntaxError as e:
         return JSONResponse({
-            "error": f"語法驗證失敗，已放棄 commit: {e}",
+            "error": f"語法驗證失敗，已放棄: {e}",
             "analysis": change.get("analysis"),
         })
 
-    # 5. Commit 到 GitHub
-    commit_msg = f"[DOT self-improve] gen={state['generation']}: {change.get('expected_effect', 'task update')[:80]}"
+    # 4.5 參照完整性檢查: TASKS 的 key 集合要跟 TASK_ORDER 對得上
+    # (這個檢查是補今天真實撞過的 production bug: "d" 被悄悄改成 "e",
+    #  語法完全合法、ast.parse 也會通過,但執行到那個 task 時直接 KeyError、整個 /api/status 500)
+    integrity_warning = None
+    try:
+        new_tasks_block = extract_tasks_code(new_content)
+        new_keys = set(re.findall(r'"(\w+)":\s*\[', new_tasks_block))
+        order_match = re.search(r'TASK_ORDER\s*=\s*\[(.*?)\]', new_content)
+        order_keys = set(re.findall(r'"(\w+)"', order_match.group(1))) if order_match else set()
+        if order_keys and new_keys and order_keys != new_keys:
+            integrity_warning = (
+                f"⚠️ 參照不一致: 新的 TASKS key 是 {sorted(new_keys)}，"
+                f"但 TASK_ORDER 還是 {sorted(order_keys)}。這會在執行到對不上的那個任務時直接 KeyError、整個 /api/status 500 — 今天才真的撞過一次。"
+            )
+    except Exception:
+        pass  # 這個檢查本身失敗不該擋住正常流程,只是少一道防線
+
+    # 5. 不直接 commit —— 存成待審查狀態,等人核准才真的寫進 GitHub
+    proposal = {
+        "generation": state["generation"],
+        "hint": hint,
+        "analysis": change.get("analysis", ""),
+        "change_type": change.get("change_type", ""),
+        "expected_effect": change.get("expected_effect", ""),
+        "old_code": old_code,
+        "new_code": new_code,
+        "file_sha": file_sha,
+        "integrity_warning": integrity_warning,
+        "created_at": time.time(),
+    }
+    save_pending_improve(proposal)
+
+    return JSONResponse({
+        "ok": True,
+        "status": "pending_approval",
+        "message": "提案已產生,等待人工核准才會真的 commit 到 GitHub",
+        "analysis": change.get("analysis"),
+        "expected_effect": change.get("expected_effect"),
+        "old_code": old_code,
+        "new_code": new_code,
+        "integrity_warning": integrity_warning,
+    })
+
+
+@app.get("/api/self-improve/pending")
+async def get_pending_improve_endpoint():
+    pending = get_pending_improve()
+    return JSONResponse({"pending": pending})
+
+
+@app.post("/api/self-improve/approve")
+async def approve_improve_endpoint(request: Request):
+    if IMPROVE_SECRET:
+        if request.headers.get("x-improve-secret", "") != IMPROVE_SECRET:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+    pending = get_pending_improve()
+    if not pending:
+        return JSONResponse({"error": "目前沒有待審查的提案"})
+
+    # 重新抓最新檔案內容,避免拿舊 sha 去 commit(審查期間檔案可能又被改過)
+    file_data = github_get_file("api/index.py")
+    if "error" in file_data:
+        return JSONResponse({"error": f"無法讀取 GitHub 檔案: {file_data['error']}"})
+
+    file_content = file_data["content"]
+    file_sha = file_data["sha"]
+
+    if pending["old_code"] not in file_content:
+        clear_pending_improve()
+        return JSONResponse({"error": "檔案內容已經變了,提案裡的 old_code 對不上現在的內容,提案已作廢,請重新產生"})
+
+    new_content = file_content.replace(pending["old_code"], pending["new_code"], 1)
+    try:
+        _ast.parse(new_content)
+    except SyntaxError as e:
+        clear_pending_improve()
+        return JSONResponse({"error": f"核准時語法驗證失敗,提案已作廢: {e}"})
+
+    commit_msg = f"[DOT self-improve, human-approved] gen={pending['generation']}: {pending.get('expected_effect', 'task update')[:80]}"
     commit_result = github_commit_file("api/index.py", new_content, file_sha, commit_msg)
     if "error" in commit_result:
         return JSONResponse({"error": f"Commit 失敗: {commit_result['error']}"})
 
-    # 6. 記錄到 Redis
     record = {
-        "generation": state["generation"],
-        "analysis": change.get("analysis", ""),
-        "change_type": change.get("change_type", ""),
-        "expected_effect": change.get("expected_effect", ""),
+        "generation": pending["generation"],
+        "analysis": pending.get("analysis", ""),
+        "change_type": pending.get("change_type", ""),
+        "expected_effect": pending.get("expected_effect", ""),
         "commit_url": commit_result.get("url", ""),
+        "human_approved": True,
     }
     try:
         old = redis_command("GET", "dot_improve_history")
@@ -1175,12 +1324,20 @@ async def self_improve_endpoint(request: Request):
     except Exception:
         pass
 
-    return JSONResponse({
-        "ok": True,
-        "analysis": change.get("analysis"),
-        "expected_effect": change.get("expected_effect"),
-        "commit_url": commit_result.get("url"),
-    })
+    clear_pending_improve()
+    return JSONResponse({"ok": True, "commit_url": commit_result.get("url"), "expected_effect": pending.get("expected_effect")})
+
+
+@app.post("/api/self-improve/reject")
+async def reject_improve_endpoint(request: Request):
+    if IMPROVE_SECRET:
+        if request.headers.get("x-improve-secret", "") != IMPROVE_SECRET:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+    pending = get_pending_improve()
+    if not pending:
+        return JSONResponse({"error": "目前沒有待審查的提案"})
+    clear_pending_improve()
+    return JSONResponse({"ok": True, "message": "提案已拒絕,沒有 commit"})
 
 
 @app.get("/api/improve-history")
