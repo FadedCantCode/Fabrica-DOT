@@ -741,6 +741,7 @@ var CMDS=[
   {k:'/approve',d:'核准待審查的提案,真的 commit 到 GitHub'},
   {k:'/reject', d:'拒絕待審查的提案,不會 commit'},
   {k:'/stats',  d:'顯示審查統計(核准率/拒絕原因)'},
+  {k:'/cleartask',d:'清除 Redis 裡的任務計畫(舊 plan 卡住時用)'},
   {k:'/memory', d:'顯示/編輯 agent 記憶'},
   {k:'/clear',  d:'清空終端'},
   {k:'/help',   d:'顯示所有指令'},
@@ -805,6 +806,7 @@ function runCmd(key,args){
   else if(key==='/approve')cmdApprove(args);
   else if(key==='/reject')cmdReject(args);
   else if(key==='/stats')cmdStats();
+  else if(key==='/cleartask')cmdClearTask();
   else if(key==='/evolve')cmdEvolve(parseInt(args)||100);
   else err('Unknown command: '+key+'. /help');
 }
@@ -875,6 +877,12 @@ async function cmdStats(){
       d.recent_rejections.forEach(function(r){addMsg('sys','·','  gen'+r.generation+': '+(r.reason||'(無))'))});
     }
   }catch(e){err('stats: '+e)}
+}
+async function cmdClearTask(){
+  try{var r=await fetch('/api/task',{method:'DELETE'});var d=await r.json();
+    if(d.ok){sys('Task plan cleared — 舊的計畫已清除,下次跑 loop 時會從全新的 plan 開始')}
+    else{err(d.error||'clear failed')}}
+  catch(e){err('cleartask: '+e)}
 }
 
 async function sendChat(text){
