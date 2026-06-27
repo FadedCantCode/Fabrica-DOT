@@ -278,7 +278,7 @@ TASKS = {
     "a": [(x, math.sin(11 * x) * math.cos(5 * x) + 0.4 * x**3 + 0.3 * abs(x) + 0.2 * x**5) for x in _XS],
     "b": [(x, math.sin(7 * x) * math.cos(4 * x) + 0.2 * x**3 + 0.1 * abs(x) + 0.05 * x**4) for x in _XS],
     "c": [(x, math.sin(9 * x) * math.cos(3 * x) + 0.3 * x**4 + 0.2 * abs(x**2)) for x in _XS],
-    "d": [(x, math.sin(5 * x) * math.cos(8 * x) + 0.4 * x**4 + 0.3 * abs(x**3) + 0.1 * x**6) for x in _XS],
+    "d": [(x, math.sin(3 * x) * math.cos(2 * x) + 0.3 * x**2 + 0.2 * abs(x)) for x in _XS],
 }
 TASK_ORDER = ["a", "b", "c", "d"]
 
@@ -413,7 +413,14 @@ def call_worker_evaluate(subtask_id: str, criteria: str, result: str) -> dict:
     req = urllib.request.Request(
         CHAT_WORKER_URL.rstrip("/") + "/evaluate",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            # 沒有 User-Agent 的話 Cloudflare Bot Protection 會回 403 1010
+            # call_worker_meta 早就用這組 UA,這裡補上保持一致
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+        },
         method="POST",
     )
     try:
