@@ -278,7 +278,7 @@ TASKS = {
     "a": [(x, math.sin(11 * x) * math.cos(5 * x) + 0.4 * x**3 + 0.3 * abs(x) + 0.2 * x**5) for x in _XS],
     "b": [(x, math.sin(7 * x) * math.cos(4 * x) + 0.2 * x**3 + 0.1 * abs(x) + 0.05 * x**4) for x in _XS],
     "c": [(x, math.sin(9 * x) * math.cos(3 * x) + 0.3 * x**4 + 0.2 * abs(x**2)) for x in _XS],
-    "d": [(x, math.sin(13 * x) * math.cos(8 * x) + 0.4 * x**5 + 0.3 * abs(x**3) + 0.2 * x**7) for x in _XS],
+    "d": [(x, math.sin(3 * x) * math.cos(2 * x) + 0.3 * x**2 + 0.2 * abs(x)) for x in _XS],
 }
 TASK_ORDER = ["a", "b", "c", "d"]
 
@@ -1166,9 +1166,9 @@ async def create_task_endpoint(request: Request):
     try:
         body = await request.json()
     except Exception:
-        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+        return JSONResponse({"error": "invalid JSON"})
     if "goal" not in body or "subtasks" not in body:
-        return JSONResponse({"error": "task schema must have 'goal' and 'subtasks'"}, status_code=400)
+        return JSONResponse({"error": "task schema must have goal and subtasks"})
     save_task_schema(body)
     return JSONResponse({"ok": True})
 
@@ -1184,20 +1184,20 @@ async def submit_result_endpoint(request: Request):
     try:
         body = await request.json()
     except Exception:
-        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+        return JSONResponse({"error": "invalid JSON"})
 
     subtask_id = str(body.get("subtask_id", "")).strip()
     result     = str(body.get("result", "")).strip()
     if not subtask_id or not result:
-        return JSONResponse({"error": "subtask_id and result are required"}, status_code=400)
+        return JSONResponse({"error": "subtask_id and result are required"})
 
     schema = get_task_schema()
     if not schema:
-        return JSONResponse({"error": "no active task plan — call plan_task first"}, status_code=404)
+        return JSONResponse({"error": "no active task plan — call plan_task first"})
 
     subtask = next((s for s in schema["subtasks"] if str(s["id"]) == subtask_id), None)
     if not subtask:
-        return JSONResponse({"error": f"subtask '{subtask_id}' not found in current plan"}, status_code=404)
+        return JSONResponse({"error": f"subtask '{subtask_id}' not found in current plan"})
 
     subtask["result"] = result
     subtask["status"] = "in_progress"
@@ -1210,19 +1210,22 @@ async def evaluate_result_endpoint(request: Request):
     try:
         body = await request.json()
     except Exception:
-        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+        # 一律回 200,錯誤放在 JSON body 裡——
+        # Vercel CDN 會攔截 4xx/5xx 並換成自己的純文字頁面,
+        # 導致 Worker 那邊的 r.json() 拿到 "error code: 502\n" 而非我們的 JSON
+        return JSONResponse({"error": "invalid JSON"})
 
     subtask_id = str(body.get("subtask_id", "")).strip()
     schema = get_task_schema()
     if not schema:
-        return JSONResponse({"error": "no active task plan"}, status_code=404)
+        return JSONResponse({"error": "no active task plan"})
 
     subtask = next((s for s in schema["subtasks"] if str(s["id"]) == subtask_id), None)
     if not subtask:
-        return JSONResponse({"error": f"subtask '{subtask_id}' not found"}, status_code=404)
+        return JSONResponse({"error": f"subtask '{subtask_id}' not found"})
 
     if not subtask.get("result"):
-        return JSONResponse({"error": "no result submitted for this subtask yet — call submit_result first"}, status_code=400)
+        return JSONResponse({"error": "no result submitted for this subtask yet — call submit_result first"})
 
     # 呼叫 Worker 的 /evaluate 端點讓 Critic LLM 判斷
     verdict = call_worker_evaluate(
@@ -1231,7 +1234,8 @@ async def evaluate_result_endpoint(request: Request):
         result=subtask["result"],
     )
     if "error" in verdict:
-        return JSONResponse({"error": f"Critic call failed: {verdict['error']}"}, status_code=502)
+        # 同樣回 200 而非 502,原因如上
+        return JSONResponse({"error": f"Critic call failed: {verdict['error']}"})
 
     passed = bool(verdict.get("passed"))
     score  = float(verdict.get("score", 0))
