@@ -275,10 +275,10 @@ def evolve(pop, data, generations, refine_every=10):
 
 _XS = [-math.pi + i * (2 * math.pi / 39) for i in range(40)]
 TASKS = {
-    "a": [(x, math.sin(17 * x) * math.cos(9 * x) + 0.5 * x**4 + 0.3 * abs(x**2) + 0.2 * x**6) for x in _XS],
-    "b": [(x, math.sin(15 * x) * math.cos(8 * x) + 0.4 * x**5 + 0.2 * abs(x**2) + 0.1 * x**6) for x in _XS],
-    "c": [(x, math.sin(2 * x) * math.cos(13 * x) + 0.4 * x**2 + 0.3 * abs(x**3) + 0.1 * x**7) for x in _XS],
-    "e": [(x, math.sin(13 * x) * math.cos(7 * x) + 0.5 * x**4 + 0.3 * abs(x**3) + 0.1 * x**6) for x in _XS],
+    "a": [(x, math.sin(11 * x) * math.cos(5 * x) + 0.4 * x**3 + 0.3 * abs(x) + 0.2 * x**5) for x in _XS],
+    "b": [(x, math.sin(7 * x) * math.cos(4 * x) + 0.2 * x**3 + 0.1 * abs(x) + 0.05 * x**4) for x in _XS],
+    "c": [(x, math.sin(9 * x) * math.cos(3 * x) + 0.3 * x**4 + 0.2 * abs(x**2)) for x in _XS],
+    "d": [(x, math.sin(3 * x) * math.cos(2 * x) + 0.3 * x**2 + 0.2 * abs(x)) for x in _XS],
 }
 TASK_ORDER = ["a", "b", "c", "d"]
 
@@ -370,6 +370,7 @@ def save_agent_memory(memory: list):
 
 
 PENDING_IMPROVE_KEY = "dot_pending_improve"
+TASK_SCHEMA_KEY    = "dot_task_schema"
 
 
 def get_pending_improve():
@@ -385,6 +386,43 @@ def save_pending_improve(proposal: dict):
 
 def clear_pending_improve():
     redis_command("DEL", PENDING_IMPROVE_KEY)
+
+
+# ── Autonomous loop: task schema helpers ──────────────────────────────────────
+
+def get_task_schema():
+    result = redis_command("GET", TASK_SCHEMA_KEY)
+    if result and result.get("result"):
+        return json.loads(result["result"])
+    return None
+
+
+def save_task_schema(schema: dict):
+    redis_command("SET", TASK_SCHEMA_KEY, json.dumps(schema))
+
+
+def clear_task_schema():
+    redis_command("DEL", TASK_SCHEMA_KEY)
+
+
+def call_worker_evaluate(subtask_id: str, criteria: str, result: str) -> dict:
+    """Ask the Worker's /evaluate endpoint (Critic LLM) whether a result satisfies criteria."""
+    if not CHAT_WORKER_URL:
+        return {"error": "CHAT_WORKER_URL not set"}
+    payload = {"subtask_id": subtask_id, "acceptance_criteria": criteria, "result": result}
+    req = urllib.request.Request(
+        CHAT_WORKER_URL.rstrip("/") + "/evaluate",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return {"error": f"Worker /evaluate HTTP {e.code}: {e.read().decode()[:200]}"}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 DECISION_LOG_KEY = "dot_improve_decisions"
@@ -1115,8 +1153,121 @@ async def set_memory_endpoint(request: Request):
 
 
 # ============================================================
+# Autonomous loop: Task Schema + Critic endpoints
+# ============================================================
+
+@app.get("/api/task")
+async def get_task_endpoint():
+    return JSONResponse({"task": get_task_schema()})
+
+
+@app.post("/api/task")
+async def create_task_endpoint(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    if "goal" not in body or "subtasks" not in body:
+        return JSONResponse({"error": "task schema must have 'goal' and 'subtasks'"}, status_code=400)
+    save_task_schema(body)
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/task")
+async def delete_task_endpoint():
+    clear_task_schema()
+    return JSONResponse({"ok": True, "message": "task schema cleared"})
+
+
+@app.post("/api/task/result")
+async def submit_result_endpoint(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+    subtask_id = str(body.get("subtask_id", "")).strip()
+    result     = str(body.get("result", "")).strip()
+    if not subtask_id or not result:
+        return JSONResponse({"error": "subtask_id and result are required"}, status_code=400)
+
+    schema = get_task_schema()
+    if not schema:
+        return JSONResponse({"error": "no active task plan — call plan_task first"}, status_code=404)
+
+    subtask = next((s for s in schema["subtasks"] if str(s["id"]) == subtask_id), None)
+    if not subtask:
+        return JSONResponse({"error": f"subtask '{subtask_id}' not found in current plan"}, status_code=404)
+
+    subtask["result"] = result
+    subtask["status"] = "in_progress"
+    save_task_schema(schema)
+    return JSONResponse({"ok": True, "subtask_id": subtask_id})
+
+
+@app.post("/api/task/evaluate")
+async def evaluate_result_endpoint(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+    subtask_id = str(body.get("subtask_id", "")).strip()
+    schema = get_task_schema()
+    if not schema:
+        return JSONResponse({"error": "no active task plan"}, status_code=404)
+
+    subtask = next((s for s in schema["subtasks"] if str(s["id"]) == subtask_id), None)
+    if not subtask:
+        return JSONResponse({"error": f"subtask '{subtask_id}' not found"}, status_code=404)
+
+    if not subtask.get("result"):
+        return JSONResponse({"error": "no result submitted for this subtask yet — call submit_result first"}, status_code=400)
+
+    # 呼叫 Worker 的 /evaluate 端點讓 Critic LLM 判斷
+    verdict = call_worker_evaluate(
+        subtask_id=subtask_id,
+        criteria=subtask.get("acceptance_criteria", ""),
+        result=subtask["result"],
+    )
+    if "error" in verdict:
+        return JSONResponse({"error": f"Critic call failed: {verdict['error']}"}, status_code=502)
+
+    passed = bool(verdict.get("passed"))
+    score  = float(verdict.get("score", 0))
+    reason = str(verdict.get("reason", ""))
+
+    if passed:
+        subtask["status"] = "passed"
+        subtask["score"]  = score
+    else:
+        subtask["retries"] = subtask.get("retries", 0) + 1
+        subtask["failure_reasons"] = (subtask.get("failure_reasons") or []) + [reason]
+        if subtask["retries"] >= subtask.get("max_retries", 3):
+            subtask["status"] = "failed"
+        else:
+            subtask["status"] = "pending"  # 允許重試
+
+    save_task_schema(schema)
+
+    all_passed   = all(s["status"] == "passed" for s in schema["subtasks"])
+    any_failed   = any(s["status"] == "failed" for s in schema["subtasks"])
+    retries_left = max(0, subtask.get("max_retries", 3) - subtask.get("retries", 0))
+
+    return JSONResponse({
+        "subtask_id":       subtask_id,
+        "passed":           passed,
+        "score":            score,
+        "reason":           reason,
+        "retries_remaining": retries_left,
+        "overall_status":   "complete" if all_passed else ("blocked" if any_failed else "in_progress"),
+    })
+
+
+# ============================================================
 # 自我改進:DOT 分析演化結果 → 寫程式 → commit GitHub
 # ============================================================
+
 
 def _gh_headers():
     return {
