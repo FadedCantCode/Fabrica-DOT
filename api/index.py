@@ -655,6 +655,29 @@ body{background:var(--bg);color:var(--ink);font-family:var(--mono);font-size:13p
   border-radius:999px;padding:3px 10px}
 .hint-chip b{color:var(--rust);font-weight:700}
 
+/* ── FILE CARD: 可下載的文件卡片,長 FINAL_ANSWER 自動生成 ── */
+.file-card{
+  display:flex;align-items:center;gap:12px;
+  background:var(--bg2);border:1.5px solid var(--line);border-radius:12px;
+  padding:11px 14px;margin-top:8px;max-width:360px;
+}
+.fc-icon{
+  width:36px;height:36px;border-radius:8px;background:var(--bg1);
+  border:1px solid var(--line);display:flex;align-items:center;justify-content:center;
+  font-size:15px;flex-shrink:0;color:var(--rust);font-family:var(--pixel);
+}
+.fc-meta{flex:1;min-width:0}
+.fc-name{font-size:13px;font-weight:600;color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc-sub{font-size:10px;color:var(--ink-mute);margin-top:2px;font-family:var(--mono)}
+.fc-btn{
+  padding:6px 12px;background:var(--bg1);border:1px solid var(--line);
+  border-radius:8px;color:var(--ink-soft);font-family:var(--mono);font-size:11px;
+  cursor:pointer;text-decoration:none;display:inline-block;flex-shrink:0;
+  transition:background .15s,border-color .15s;white-space:nowrap;
+}
+.fc-btn:hover{background:var(--bg2);border-color:var(--rust);color:var(--rust)}
+
 /* ── MEMORY PANEL: 對話泡泡風格,呼應 comic speech-bubble 但保持機能性 ── */
 .mem-panel{position:fixed;inset:0;z-index:200;background:rgba(10,9,8,.85);display:none;
   align-items:center;justify-content:center}
@@ -929,7 +952,7 @@ async function sendAgent(goal){
     if(d.memory&&d.memory.length){agentMemory=d.memory;saveMemory();}
     if(d.provider){sys('via '+d.provider)}
     if(d.final_answer){
-      addMsg('final','DOT',d.final_answer);
+      addFinalWithCard(d.final_answer);
       chatHistory.push({role:'user',content:'[AGENT] '+goal});
       chatHistory.push({role:'assistant',content:d.final_answer});
       fetch('/api/chat/store',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -939,6 +962,46 @@ async function sendAgent(goal){
 }
 
 function updateMemCount(){var el=document.getElementById('sb-mem');if(el)el.textContent=agentMemory.length+' memor'+(agentMemory.length===1?'y':'ies')}
+
+function createFileCard(content, suggestedName){
+  // 從內容猜副檔名
+  var ext = '.txt';
+  var typeLabel = 'Text · TXT';
+  var icon = '📄';
+  if(content.trimStart().startsWith('#') || content.includes('\n## ') || content.includes('\n### ')){
+    ext = '.md'; typeLabel = 'Document · MD'; icon = '📝';
+  } else if(content.includes('```python') || content.includes('def ') || content.includes('import ')){
+    ext = '.py'; typeLabel = 'Code · PY'; icon = '</>';
+  } else if(content.includes('```javascript') || content.includes('function ') || content.includes('const ')){
+    ext = '.js'; typeLabel = 'Code · JS'; icon = '</>';
+  } else if(content.trimStart().startsWith('{')){
+    ext = '.json'; typeLabel = 'Data · JSON'; icon = '{}';
+  }
+  var filename = (suggestedName || 'dot-output') + ext;
+  var blob = new Blob([content], {type: 'text/plain'});
+  var url = URL.createObjectURL(blob);
+
+  var card = document.createElement('div');
+  card.className = 'file-card';
+  card.innerHTML =
+    '<div class="fc-icon">'+icon+'</div>' +
+    '<div class="fc-meta"><div class="fc-name">'+filename+'</div><div class="fc-sub">'+typeLabel+' · '+(content.length/1024).toFixed(1)+'KB</div></div>' +
+    '<a class="fc-btn" href="'+url+'" download="'+filename+'">Download</a>';
+  return card;
+}
+
+function addFinalWithCard(content){
+  var mc = addMsg('final','DOT',content);
+  // 超過 300 字就生成可下載的卡片
+  if(content && content.length > 300){
+    var plain = content.replace(/<br>/g,'\n').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
+    var card = createFileCard(plain, 'dot-output-'+Date.now());
+    var parent = mc && mc.closest ? mc.closest('.msg') : null;
+    if(parent) parent.appendChild(card);
+    else{var $t=document.getElementById('term');if($t)$t.appendChild(card)}
+  }
+}
+
 function saveMemory(){
   try{sessionStorage.setItem('dot_memory',JSON.stringify(agentMemory))}catch(e){}
   updateMemCount();
